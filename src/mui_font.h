@@ -1,0 +1,103 @@
+/**
+ * @file mui_font.h
+ * @brief MUI 点阵字体（5x7，模拟器与单片机共用）
+ *
+ * 只依赖 mui.h 的图形 API，可在任意平台直接编译。
+ */
+
+#ifndef MUI_FONT_H
+#define MUI_FONT_H
+
+#include <stdint.h>
+
+/* -------- LVGL 转换字体（8bpp 灰度抗锯齿） -------- */
+
+/** @brief 单个字形描述（与 LVGL glyph_dsc 字段对应） */
+typedef struct {
+    uint16_t bitmap_index;  /**< 位图起始偏移（字节） */
+    uint16_t adv_w;         /**< 步进宽度（1/16 像素） */
+    uint8_t box_w;          /**< 字形位图宽（像素） */
+    uint8_t box_h;          /**< 字形位图高（像素） */
+    int8_t ofs_x;           /**< 水平偏移 */
+    int8_t ofs_y;           /**< 相对基线的垂直偏移 */
+} mui_glyph_dsc_t;
+
+/** @brief LVGL 转换字体描述 */
+typedef struct {
+    const uint8_t *bitmap;        /**< 8bpp 灰度位图数据 */
+    const mui_glyph_dsc_t *glyphs;/**< 字形描述数组（按字符序排列） */
+    uint8_t first_char;           /**< 首字符 ASCII 码 */
+    uint8_t last_char;            /**< 末字符 ASCII 码 */
+    uint8_t line_height;          /**< 行高（像素） */
+    int8_t base_line;             /**< 基线（从行底向上） */
+} mui_lv_font_t;
+
+/**
+ * @brief 绘制单个 LVGL 字体字符（8bpp alpha 混合，需纯色背景）
+ * @param x      字符行框左上角 x
+ * @param y      字符行框左上角 y
+ * @param c      字符（超出字体范围则跳过）
+ * @param f      字体描述
+ * @param fg     前景色
+ * @param bg     背景色（alpha 混合用）
+ * @param scale  整数放大倍数
+ */
+void mui_lv_font_draw_char(int16_t x, int16_t y, char c, const mui_lv_font_t *f,
+                           uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 绘制 LVGL 字体字符串
+ * @param x      行框左上角 x
+ * @param y      行框左上角 y
+ * @param s      字符串（无字形时该字符跳过并按空格步进）
+ * @param f      字体描述
+ * @param fg     前景色
+ * @param bg     背景色
+ * @param scale  整数放大倍数
+ */
+void mui_lv_font_draw_text(int16_t x, int16_t y, const char *s, const mui_lv_font_t *f,
+                           uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 计算 LVGL 字体字符串宽度
+ * @param s      字符串
+ * @param f      字体描述
+ * @param scale  整数放大倍数
+ * @return       宽度（像素）
+ */
+int16_t mui_lv_font_text_width(const char *s, const mui_lv_font_t *f, int16_t scale);
+
+/* -------- 5x7 点阵字体 -------- */
+
+/**
+ * @brief 绘制单个 5x7 点阵字符
+ * @param x      左上角 x 坐标
+ * @param y      左上角 y 坐标
+ * @param c      字符（未收录的字符跳过不画）
+ * @param color  前景色
+ * @param scale  整数放大倍数（1 = 5x7 原始大小）
+ */
+void mui_font_draw_char(int16_t x, int16_t y, char c, uint16_t color, int16_t scale);
+
+/**
+ * @brief 绘制点阵字符串
+ * @param x        左上角 x 坐标
+ * @param y        左上角 y 坐标
+ * @param s        字符串
+ * @param color    前景色
+ * @param scale    整数放大倍数
+ * @param spacing  字距（像素，scale=1 时的逻辑间距）
+ */
+void mui_font_draw_text(int16_t x, int16_t y, const char *s, uint16_t color,
+                        int16_t scale, int16_t spacing);
+
+/**
+ * @brief 计算点阵字符串宽度
+ * @param s        字符串
+ * @param scale    整数放大倍数
+ * @param spacing  字距（像素，scale=1 时的逻辑间距）
+ * @return         宽度（像素）
+ */
+int16_t mui_font_text_width(const char *s, int16_t scale, int16_t spacing);
+
+#endif /* MUI_FONT_H */

@@ -1,0 +1,28 @@
+# -------- 构建产物 --------
+build/
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+
+# -------- IDE / 编辑器 --------
+.vscode/
+.codebuddy/
+.idea/
+*.swp
+
+# -------- CMake --------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# -------- 测试输出 --------
+test_output.png
+test_output.ppm
+
+# -------- 系统文件 --------
+Thumbs.db
+.DS_Store

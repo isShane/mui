@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MUI 资源工坊</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f0f2f5; color: #333; padding: 24px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; color: #1a3a5c; }
+  .sub { font-size: 12px; color: #888; margin-bottom: 16px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 8px 20px; border: 1px solid #ccd4dd; border-bottom: none; border-radius: 8px 8px 0 0;
+         background: #e2e7ee; cursor: pointer; font-size: 14px; user-select: none; }
+  .tab.on { background: #fff; font-weight: bold; color: #1a3a5c; }
+  .panel { display: none; background: #fff; border: 1px solid #ccd4dd; border-radius: 0 8px 8px 8px; padding: 20px; }
+  .panel.on { display: block; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .col { flex: 1; min-width: 340px; }
+  .drop { border: 2px dashed #9db2c8; border-radius: 10px; padding: 28px; text-align: center;
+          color: #7a8ba0; cursor: pointer; transition: .15s; font-size: 14px; }
+  .drop:hover, .drop.over { border-color: #3f77b8; background: #eef4fb; color: #3f77b8; }
+  .drop small { display: block; margin-top: 4px; font-size: 11px; color: #aab6c6; }
+  fieldset { border: 1px solid #e2e7ee; border-radius: 8px; padding: 12px 14px; margin-top: 16px; }
+  legend { font-size: 13px; font-weight: bold; color: #1a3a5c; padding: 0 6px; }
+  label { display: block; font-size: 12px; color: #666; margin: 10px 0 4px; }
+  select, input[type=text], input[type=number] { width: 100%; padding: 6px 8px; border: 1px solid #ccd4dd;
+         border-radius: 6px; font-size: 13px; }
+  .inline { display: flex; gap: 10px; align-items: center; }
+  .inline > * { flex: 1; }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; margin-top: 8px; }
+  .chk input { width: auto; }
+  .btn { display: inline-block; padding: 9px 22px; border: none; border-radius: 7px; cursor: pointer;
+         font-size: 14px; margin: 14px 6px 0 0; }
+  .btn-pri { background: #3f77b8; color: #fff; }
+  .btn-pri:hover { background: #34659c; }
+  .btn-sec { background: #e2e7ee; color: #333; }
+  .btn-sec:hover { background: #d0d9e4; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .preview-box { border: 1px solid #e2e7ee; border-radius: 8px; padding: 12px; text-align: center;
+                 background: repeating-conic-gradient(#f6f8fa 0 25%, #e8ecf1 0 50%) 0 0/20px 20px; min-height: 120px; }
+  .preview-box canvas { max-width: 100%; image-rendering: pixelated; }
+  .stat { font-size: 12px; color: #555; margin-top: 8px; line-height: 1.7; background: #f6f8fa;
+          border-radius: 6px; padding: 8px 10px; }
+  .stat b { color: #1a3a5c; }
+  .warn { color: #b05a00; }
+  .err { color: #c0392b; font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
+  .ok { color: #1e7d32; font-size: 13px; margin-top: 10px; }
+  .hint { font-size: 12px; color: #888; margin-top: 14px; line-height: 1.7; }
+  .chars { font-size: 14px; letter-spacing: 2px; word-break: break-all; background: #f6f8fa;
+           border-radius: 6px; padding: 8px 10px; margin-top: 8px; max-height: 120px; overflow-y: auto; }
+  code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MUI 资源工坊</h1>
+  <div class="sub">图片 / 字体 转 C 数组 — 生成文件与命令行工具（tools\*.py）格式完全一致，放入 assets\ 即可编译</div>
+
+  <div class="tabs">
+    <div class="tab on" id="tab-img" onclick="switchTab('img')">图片转换</div>
+    <div class="tab" id="tab-font" onclick="switchTab('font')">LVGL 字体转换</div>
+  </div>
+
+  <!-- ======================= 图片转换 ======================= -->
+  <div class="panel on" id="panel-img">
+    <div class="row">
+      <div class="col">
+        <div class="drop" id="imgDrop">
+          拖拽图片到此处，或点击选择
+          <small>支持 PNG / JPG / BMP / GIF / WebP</small>
+        </div>
+        <input type="file" id="imgFile" accept="image/*" hidden>
+
+        <fieldset>
+          <legend>转换选项</legend>
+          <label>输出模式</label>
+          <select id="imgMode">
+            <option value="alpha">8bpp alpha 蒙版（单色图标，推荐）</option>
+            <option value="alpha_inv">8bpp alpha 蒙版·反相（白底深色图案）</option>
+            <option value="rgb">RGB565 彩色（不透明）</option>
+            <option value="key">RGB565 彩色 + 品红透明键（PNG 透明底）</option>
+          </select>
+
+          <label>变量名（生成 img_变量名.c / .h）</label>
+          <input type="text" id="imgName" placeholder="如 icon1">
+
+          <label>缩放尺寸（留空 = 原尺寸；建议按实际显示尺寸 1:1 制作）</label>
+          <div class="inline">
+            <input type="number" id="imgW" placeholder="宽" min="1">
+            <input type="number" id="imgH" placeholder="高" min="1">
+          </div>
+          <div class="chk"><input type="checkbox" id="imgLock" checked> 锁定宽高比例</div>
+        </fieldset>
+
+        <button class="btn btn-pri" id="imgGen" disabled>生成 C 代码</button>
+        <button class="btn btn-sec" id="imgSave" disabled>保存到文件夹…</button>
+        <button class="btn btn-sec" id="imgDl" disabled>下载 .c / .h</button>
+        <div id="imgMsg"></div>
+      </div>
+
+      <div class="col">
+        <div class="preview-box"><canvas id="imgPrev" width="0" height="0"></canvas></div>
+        <div class="stat" id="imgStat">选择图片后显示预览与统计</div>
+        <div class="hint">
+          模式说明：<br>
+          · <b>alpha 蒙版</b>：有透明通道用通道，否则亮度当透明度（黑底白线）。边缘 256 级平滑，颜色由 <code>style->fg</code> 渲染时决定<br>
+          · <b>反相</b>：白底深色图案用，白=透明<br>
+          · <b>品红键</b>：透明像素烙成 0xF81F，配 <code>mui_draw_bitmap_key</code>，边缘硬<br>
+          生成后把两个文件放进项目 <code>assets\</code>，代码里 <code>#include "img_名字.h"</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= 字体转换 ======================= -->
+  <div class="panel" id="panel-font">
+    <div class="row">
+      <div class="col">
+        <div class="drop" id="fontDrop">
+          拖拽 LVGL 字体 .c 文件到此处，或点击选择
+          <small>lvgl.fluentui.co 导出（--no-compress --stride 1）</small>
+        </div>
+        <input type="file" id="fontFile" accept=".c,.h,.txt" hidden>
+
+        <fieldset>
+          <legend>转换选项</legend>
+          <label>字体名（生成 mui_font_名字.c / .h）</label>
+          <input type="text" id="fontName" placeholder="如 hm24">
+        </fieldset>
+
+        <button class="btn btn-pri" id="fontGen" disabled>生成 C 代码</button>
+        <button class="btn btn-sec" id="fontSave" disabled>保存到文件夹…</button>
+        <button class="btn btn-sec" id="fontDl" disabled>下载 .c / .h</button>
+        <div id="fontMsg"></div>
+      </div>
+
+      <div class="col">
+        <div class="stat" id="fontStat">选择 LVGL 字体 .c 后显示解析结果</div>
+        <div class="chars" id="fontChars" style="display:none"></div>
+        <div class="hint">
+          流程：LVGL 字体工具（lvgl.fluentui.co）选字体导出 .c → 拖入本页 → 生成
+          <code>mui_font_名字.c/.h</code> 放入 <code>assets\</code><br>
+          代码用法：<code>mui_lv_font_draw_text(x, y, "123", &amp;hm24, 前景, 背景, 放大倍数);</code><br>
+          <span class="warn">注意：当前渲染器仅支持 8bpp 导出（字体工具里 bpp 选 8）</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================ 通用 ============================ */
+
+function switchTab(which) {
+  document.getElementById('tab-img').classList.toggle('on', which === 'img');
+  document.getElementById('tab-font').classList.toggle('on', which === 'font');
+  document.getElementById('panel-img').classList.toggle('on', which === 'img');
+  document.getElementById('panel-font').classList.toggle('on', which === 'font');
+}
+
+/** 下载文本为文件 */
+function downloadText(filename, text) {
+  const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+/** 优先用文件夹选择器直接写入（Chrome/Edge），失败回退下载 */
+async function saveOrDownload(cName, cText, hName, hText, msgEl) {
+  if (window.showDirectoryPicker) {
+    try {
+      const dir = await window.showDirectoryPicker({mode: 'readwrite'});
+      for (const [name, text] of [[cName, cText], [hName, hText]]) {
+        const fh = await dir.getFileHandle(name, {create: true});
+        const w = await fh.createWritable();
+        await w.write(new Blob([text], {type: 'text/plain;charset=utf-8'}));
+        await w.close();
+      }
+      msgEl.innerHTML = '<div class="ok">已写入 ' + dir.name + '\\：' + cName + ' / ' + hName + '</div>';
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;  /* 用户取消 */
+      /* 落入下载回退 */
+    }
+  }
+  downloadText(cName, cText);
+  downloadText(hName, hText);
+  msgEl.innerHTML = '<div class="ok">已触发下载：' + cName + ' / ' + hName +
+                    '（请自行放入 assets\\ 目录）</div>';
+}
+
+/** 变量名合法化：只留字母数字下划线，数字开头加 g 前缀（C 标识符规则） */
+function sanitizeName(s, fallback) {
+  s = (s || '').replace(/^img_/, '').replace(/^mui_font_/, '')
+       .replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_]/g, '');
+  if (/^[0-9]/.test(s)) s = 'g' + s;
+  return s || fallback;
+}
+
+/* ============================ 图片转换 ============================ */
+
+const imgState = { img: null, fileName: '' };
+
+const imgDrop = document.getElementById('imgDrop');
+const imgFile = document.getElementById('imgFile');
+
+imgDrop.onclick = () => imgFile.click();
+['dragover', 'dragleave', 'drop'].forEach(ev => {
+  imgDrop.addEventListener(ev, e => {
+    e.preventDefault();
+    imgDrop.classList.toggle('over', ev === 'dragover');
+    if (ev === 'drop' && e.dataTransfer.files[0]) loadImageFile(e.dataTransfer.files[0]);
+  });
+});
+imgFile.onchange = () => { if (imgFile.files[0]) loadImageFile(imgFile.files[0]); };
+
+document.getElementById('imgName').addEventListener('input', refreshImgPreview);
+
+/* 宽高联动（锁定比例） */
+document.getElementById('imgW').addEventListener('input', () => {
+  if (!imgState.img || !document.getElementById('imgLock').checked) return;
+  const w = parseInt(document.getElementById('imgW').value, 10);
+  if (w > 0) document.getElementById('imgH').value =
+    Math.max(1, Math.round(imgState.img.naturalHeight * w / imgState.img.naturalWidth));
+  refreshImgPreview();
+});
+document.getElementById('imgH').addEventListener('input', () => {
+  if (!imgState.img || !document.getElementById('imgLock').checked) return;
+  const h = parseInt(document.getElementById('imgH').value, 10);
+  if (h > 0) document.getElementById('imgW').value =
+    Math.max(1, Math.round(imgState.img.naturalWidth * h / imgState.img.naturalHeight));
+  refreshImgPreview();
+});
+document.getElementById('imgMode').addEventListener('change', refreshImgPreview);
+
+function loadImageFile(file) {
+  if (!file.type.startsWith('image/')) {
+    document.getElementById('imgMsg').innerHTML = '<div class="err">不是图片文件</div>';
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    imgState.img = img;
+    imgState.fileName = file.name;
+    document.getElementById('imgName').value = sanitizeName(file.name, 'image');
+    document.getElementById('imgW').value = '';
+    document.getElementById('imgH').value = '';
+    imgDrop.innerHTML = '<b>' + file.name + '</b>（' + img.naturalWidth + 'x' + img.naturalHeight +
+                        '）<small>点击可重新选择</small>';
+    refreshImgPreview();
+  };
+  img.onerror = () => document.getElementById('imgMsg').innerHTML = '<div class="err">图片读取失败</div>';
+  img.src = url;
+}
+
+/** 当前目标尺寸（null = 原尺寸） */
+function targetSize() {
+  const w = parseInt(document.getElementById('imgW').value, 10);
+  const h = parseInt(document.getElementById('imgH').value, 10);
+  if (w > 0 && h > 0) return [w, h];
+  return null;
+}
+
+/** 取处理后的 ImageData（含缩放） */
+function processedData() {
+  const img = imgState.img;
+  let w = img.naturalWidth, h = img.naturalHeight;
+  const ts = targetSize();
+  if (ts) [w, h] = ts;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d');
+  cx.imageSmoothingEnabled = true;
+  cx.imageSmoothingQuality = 'high';
+  cx.drawImage(img, 0, 0, w, h);
+  return [cx.getImageData(0, 0, w, h), w, h];
+}
+
+/** 更新预览与统计 */
+function refreshImgPreview() {
+  const msg = document.getElementById('imgMsg');
+  msg.innerHTML = '';
+  if (!imgState.img) return;
+  const [d, w, h] = processedData();
+  const mode = document.getElementById('imgMode').value;
+  const bytes = (mode === 'rgb' || mode === 'key') ? w * h * 2 : w * h;
+
+  /* 预览画布：按模式重绘 */
+  const pv = document.getElementById('imgPrev');
+  pv.width = w; pv.height = h;
+  const pc = pv.getContext('2d');
+  const out = pc.createImageData(w, h);
+  let hasAlphaCh = false;
+  for (let i = 0; i < d.data.length; i += 4) if (d.data[i + 3] < 255) { hasAlphaCh = true; break; }
+  for (let i = 0; i < d.data.length; i += 4) {
+    const r = d.data[i], g = d.data[i + 1], b = d.data[i + 2], a = d.data[i + 3];
+    let R = r, G = g, B = b;
+    if (mode === 'alpha' || mode === 'alpha_inv') {
+      const m = hasAlphaCh ? a : (mode === 'alpha_inv' ? 255 - r : r); /* 亮度即透明度 */
+      R = m; G = m; B = m;   /* 预览灰度显示蒙版形状 */
+    } else if (mode === 'key' && a < 128) {
+      R = 255; G = 0; B = 255; /* 品红键 */
+    }
+    out.data[i] = R; out.data[i + 1] = G; out.data[i + 2] = B; out.data[i + 3] = 255;
+  }
+  pc.putImageData(out, 0, 0);
+
+  document.getElementById('imgStat').innerHTML =
+    '源图：<b>' + imgState.fileName + '</b>（' + imgState.img.naturalWidth + 'x' +
+    imgState.img.naturalHeight + '）<br>' +
+    '输出：<b>' + w + 'x' + h + '</b>' +
+    (hasAlphaCh ? '，检测到透明通道（蒙版将直接采用 alpha 通道）' : '') + '<br>' +
+    'Flash 占用：<b>' + bytes + ' 字节</b>（' + (bytes / 1024).toFixed(1) + ' KB）';
+  document.getElementById('imgGen').disabled = false;
+}
+
+document.getElementById('imgGen').onclick = () => {
+  const varName = sanitizeName(document.getElementById('imgName').value, 'image');
+  if (varName !== document.getElementById('imgName').value)
+    document.getElementById('imgName').value = varName;
+  try {
+    const [cText, hText] = buildImgAsset(varName);
+    imgState.cText = cText; imgState.hText = hText; imgState.varName = varName;
+    document.getElementById('imgSave').disabled = false;
+    document.getElementById('imgDl').disabled = false;
+    document.getElementById('imgMsg').innerHTML =
+      '<div class="ok">生成成功：img_' + varName + '.c / img_' + varName + '.h，点击右侧按钮保存</div>';
+  } catch (e) {
+    document.getElementById('imgMsg').innerHTML = '<div class="err">生成失败：' + e.message + '</div>';
+  }
+};
+
+document.getElementById('imgSave').onclick = () =>
+  saveOrDownload('img_' + imgState.varName + '.c', imgState.cText,
+                 'img_' + imgState.varName + '.h', imgState.hText,
+                 document.getElementById('imgMsg'));
+
+document.getElementById('imgDl').onclick = () => {
+  downloadText('img_' + imgState.varName + '.c', imgState.cText);
+  downloadText('img_' + imgState.varName + '.h', imgState.hText);
+  document.getElementById('imgMsg').innerHTML =
+    '<div class="ok">已触发下载两个文件，请放入 assets\\ 目录</div>';
+};
+
+/** 生成 C/H 文本（与 tools/img_conv.py 输出格式一致） */
+function buildImgAsset(varName) {
+  const [d, w, h] = processedData();
+  const mode = document.getElementById('imgMode').value;
+  const isAlpha = (mode === 'alpha' || mode === 'alpha_inv');
+  let hasAlphaCh = false;
+  for (let i = 3; i < d.data.length; i += 4) if (d.data[i] < 255) { hasAlphaCh = true; break; }
+
+  const px = d.data;
+  const hex2 = v => '0x' + v.toString(16).toUpperCase().padStart(2, '0');
+  const hex4 = v => '0x' + v.toString(16).toUpperCase().padStart(4, '0');
+
+  let dataLines = [];
+  if (isAlpha) {
+    for (let y = 0; y < h; y++) {
+      let row = '';
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        let a;
+        if (hasAlphaCh) a = px[i + 3];
+        else a = mode === 'alpha_inv' ? 255 - px[i] : px[i];   /* 亮度即透明度 */
+        row += hex2(a) + ',';
+      }
+      dataLines.push('        ' + row);
+    }
+  } else {
+    let row = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (mode === 'key' && px[i + 3] < 128) {
+          row.push(hex4(0xF81F) + ',');   /* MUI_MAGENTA 色键 */
+        } else {
+          row.push(hex4(((px[i] & 0xF8) << 8) | ((px[i + 1] & 0xFC) << 3) | (px[i + 2] >> 3)) + ',');
+        }
+        if (row.length === 12) { dataLines.push('        ' + row.join(' ')); row = []; }
+      }
+    }
+    if (row.length) dataLines.push('        ' + row.join(' '));
+  }
+
+  const up = varName.toUpperCase();
+  const bytes = isAlpha ? w * h : w * h * 2;
+
+  let cText;
+  if (isAlpha) {
+    cText = '/**\n * @file img_' + varName + '.c\n' +
+      ' * @brief 蒙版资源：' + varName + '（' + w + 'x' + h + '，8bpp alpha，亮度即透明度）\n' +
+      ' * 由 tools/mui_tools.html 生成，勿手工修改\n */\n\n' +
+      '#include "mui.h"\n#include "img_' + varName + '.h"\n\n' +
+      '/* -------- 蒙版数据（' + bytes + ' 字节） -------- */\n' +
+      'static const uint8_t ' + varName + '_data[] = {\n' +
+      dataLines.join('\n') + '\n};\n\n' +
+      'const mui_image_alpha_t ' + varName + ' = {\n' +
+      '    .w = ' + w + ',\n    .h = ' + h + ',\n    .data = ' + varName + '_data,\n};\n';
+  } else {
+    cText = '/**\n * @file img_' + varName + '.c\n' +
+      ' * @brief 位图资源：' + varName + '（' + w + 'x' + h + '，RGB565' +
+      (mode === 'key' ? '，透明键=MAGENTA' : '') + '）\n' +
+      ' * 由 tools/mui_tools.html 生成，勿手工修改\n */\n\n' +
+      '#include "mui.h"\n#include "img_' + varName + '.h"\n\n' +
+      '/* -------- 像素数据（' + bytes + ' 字节） -------- */\n' +
+      'static const uint16_t ' + varName + '_data[] = {\n' +
+      dataLines.join('\n') + '\n};\n\n' +
+      'const mui_image_t ' + varName + ' = {\n' +
+      '    .w = ' + w + ',\n    .h = ' + h + ',\n    .data = ' + varName + '_data,\n};\n';
+  }
+
+  const hText = '/**\n * @file img_' + varName + '.h\n' +
+    ' * @brief ' + (isAlpha ? '蒙版' : '位图') + '资源 ' + varName + ' 声明（由 tools/mui_tools.html 生成）\n */\n\n' +
+    '#ifndef IMG_' + up + '_H\n#define IMG_' + up + '_H\n\n#include "mui.h"\n\n' +
+    'extern const ' + (isAlpha ? 'mui_image_alpha_t' : 'mui_image_t') + ' ' + varName + ';\n\n' +
+    '#endif /* IMG_' + up + '_H */\n';
+  return [cText, hText];
+}
+
+/* ============================ 字体转换 ============================ */
+
+const fontState = {};
+
+const fontDrop = document.getElementById('fontDrop');
+const fontFile = document.getElementById('fontFile');
+
+fontDrop.onclick = () => fontFile.click();
+['dragover', 'dragleave', 'drop'].forEach(ev => {
+  fontDrop.addEventListener(ev, e => {
+    e.preventDefault();
+    fontDrop.classList.toggle('over', ev === 'dragover');
+    if (ev === 'drop' && e.dataTransfer.files[0]) loadFontFile(e.dataTransfer.files[0]);
+  });
+});
+fontFile.onchange = () => { if (fontFile.files[0]) loadFontFile(fontFile.files[0]); };
+
+function loadFontFile(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const data = parseLvglFont(rd.result);
+      fontState.data = data;
+      fontState.fileName = file.name;
+      document.getElementById('fontName').value =
+        sanitizeName(file.name.replace(/\.c$/, ''), 'myfont');
+      fontDrop.innerHTML = '<b>' + file.name + '</b><small>点击可重新选择</small>';
+
+      let s = '字号：<b>' + data.size + 'px</b>　bpp：<b>' + data.bpp + '</b>' +
+              '（渲染器仅支持 8bpp）<br>' +
+              '字符范围：<b>U+' + hex4s(data.range_start) + ' - U+' +
+              hex4s(data.range_start + data.range_length - 1) + '</b>，共 <b>' +
+              data.range_length + '</b> 个字形<br>' +
+              '行高 ' + data.line_height + '，基线 ' + data.base_line +
+              '，位图 <b>' + data.bitmap.length + ' 字节</b> Flash';
+      if (data.bpp !== 8) s += '<br><span class="warn">警告：非 8bpp，当前渲染器无法使用，请在 LVGL 工具重导出（bpp=8）</span>';
+      document.getElementById('fontStat').innerHTML = s;
+
+      const charsEl = document.getElementById('fontChars');
+      let chars = '';
+      for (let i = 0; i < data.range_length; i++) {
+        const cp = data.range_start + i;
+        chars += (cp >= 32 && cp < 127) ? String.fromCharCode(cp) : '·';
+      }
+      charsEl.textContent = chars;
+      charsEl.style.display = 'block';
+      document.getElementById('fontGen').disabled = false;
+      document.getElementById('fontMsg').innerHTML = '';
+    } catch (e) {
+      document.getElementById('fontStat').innerHTML = '';
+      document.getElementById('fontChars').style.display = 'none';
+      document.getElementById('fontGen').disabled = true;
+      document.getElementById('fontMsg').innerHTML =
+        '<div class="err">解析失败：' + e.message + '</div>';
+    }
+  };
+  rd.readAsText(file);
+}
+
+function hex4s(v) { return v.toString(16).toUpperCase().padStart(4, '0'); }
+
+/** 解析 LVGL 字体 C 文件（与 tools/lvgl_font_conv.py 逻辑一致） */
+function parseLvglFont(src) {
+  const data = {};
+  let m = src.match(/glyph_bitmap\[\]\s*=\s*\{([\s\S]*?)\};/);
+  if (!m) throw new Error('未找到 glyph_bitmap[]');
+  data.bitmap = (m[1].match(/0x[0-9a-fA-F]+/g) || []).map(s => parseInt(s, 16));
+
+  const dscRe = /\{\.bitmap_index\s*=\s*(\d+),\s*\.adv_w\s*=\s*(\d+),\s*\.box_w\s*=\s*(\d+),\s*\.box_h\s*=\s*(\d+),\s*\.ofs_x\s*=\s*(-?\d+),\s*\.ofs_y\s*=\s*(-?\d+)\}/g;
+  data.dscs = [];
+  let dm;
+  while ((dm = dscRe.exec(src)))
+    data.dscs.push(dm.slice(1, 7).map(Number));
+
+  m = src.match(/\.range_start\s*=\s*(\d+),\s*\.range_length\s*=\s*(\d+),\s*\.glyph_id_start\s*=\s*(\d+)/);
+  if (!m) throw new Error('未找到 cmap 或 cmap 不是 FORMAT0_TINY 连续段');
+  data.range_start = +m[1]; data.range_length = +m[2]; data.glyph_id_start = +m[3];
+
+  m = src.match(/\.line_height\s*=\s*(\d+)/);
+  if (!m) throw new Error('未找到 line_height');
+  data.line_height = +m[1];
+  m = src.match(/\.base_line\s*=\s*(-?\d+)/);
+  data.base_line = m ? +m[1] : 0;
+  m = src.match(/\.bpp\s*=\s*(\d+)/);
+  if (!m) throw new Error('未找到 bpp');
+  data.bpp = +m[1];
+  m = src.match(/Size:\s*(\d+)\s*px/);
+  data.size = m ? +m[1] : 0;
+  return data;
+}
+
+document.getElementById('fontGen').onclick = () => {
+  const name = sanitizeName(document.getElementById('fontName').value, 'myfont');
+  document.getElementById('fontName').value = name;
+  const [cText, hText] = buildFontAsset(name);
+  fontState.cText = cText; fontState.hText = hText; fontState.name = name;
+  document.getElementById('fontSave').disabled = false;
+  document.getElementById('fontDl').disabled = false;
+  document.getElementById('fontMsg').innerHTML =
+    '<div class="ok">生成成功：mui_font_' + name + '.c / .h，点击右侧按钮保存</div>';
+};
+
+document.getElementById('fontSave').onclick = () =>
+  saveOrDownload('mui_font_' + fontState.name + '.c', fontState.cText,
+                 'mui_font_' + fontState.name + '.h', fontState.hText,
+                 document.getElementById('fontMsg'));
+
+document.getElementById('fontDl').onclick = () => {
+  downloadText('mui_font_' + fontState.name + '.c', fontState.cText);
+  downloadText('mui_font_' + fontState.name + '.h', fontState.hText);
+  document.getElementById('fontMsg').innerHTML =
+    '<div class="ok">已触发下载两个文件，请放入 assets\\ 目录</div>';
+};
+
+/** 生成 C/H 文本（与 tools/lvgl_font_conv.py 输出格式一致） */
+function buildFontAsset(name) {
+  const d = fontState.data;
+  const gs = d.glyph_id_start;
+  const glyphs = [];
+  for (let i = 0; i < d.range_length; i++) glyphs.push(d.dscs[gs + i]);
+  const up = name.toUpperCase();
+
+  const bmRows = [];
+  let row = [];
+  for (const b of d.bitmap) {
+    row.push('0x' + b.toString(16).padStart(2, '0') + ',');
+    if (row.length === 16) { bmRows.push('    ' + row.join('')); row = []; }
+  }
+  if (row.length) bmRows.push('    ' + row.join(''));
+
+  const cText = '/**\n * @file mui_font_' + name + '.c\n' +
+    ' * @brief LVGL 转换字体：' + name + '（' + d.size + 'px，' + d.bpp + 'bpp，U+' +
+    hex4s(d.range_start) + '-U+' + hex4s(d.range_start + d.range_length - 1) + '）\n' +
+    ' * 由 tools/mui_tools.html 生成，勿手工修改\n */\n\n' +
+    '#include "mui_font.h"\n#include "mui_font_' + name + '.h"\n\n' +
+    '/* -------- 字形位图（' + d.bitmap.length + ' 字节） -------- */\n' +
+    'static const uint8_t ' + name + '_bitmap[] = {\n' + bmRows.join('\n') + '\n};\n\n' +
+    '/* -------- 字形描述 -------- */\n' +
+    'static const mui_glyph_dsc_t ' + name + '_glyphs[] = {\n' +
+    glyphs.map(g => '    {' + g.join(', ') + '},').join('\n') + '\n};\n\n' +
+    'const mui_lv_font_t ' + name + ' = {\n' +
+    '    .bitmap = ' + name + '_bitmap,\n' +
+    '    .glyphs = ' + name + '_glyphs,\n' +
+    '    .first_char = ' + d.range_start + ',\n' +
+    '    .last_char = ' + (d.range_start + d.range_length - 1) + ',\n' +
+    '    .line_height = ' + d.line_height + ',\n' +
+    '    .base_line = ' + d.base_line + ',\n};\n';
+
+  const hText = '/**\n * @file mui_font_' + name + '.h\n' +
+    ' * @brief LVGL 转换字体 ' + name + ' 声明（由 tools/mui_tools.html 生成）\n */\n\n' +
+    '#ifndef MUI_FONT_' + up + '_H\n#define MUI_FONT_' + up + '_H\n\n' +
+    '#include "mui_font.h"\n\nextern const mui_lv_font_t ' + name + ';\n\n' +
+    '#endif /* MUI_FONT_' + up + '_H */\n';
+  return [cText, hText];
+}
+</script>
+</body>
+</html>
