@@ -18,6 +18,7 @@
 #define MUI_H
 
 #include <stdint.h>
+#include <stddef.h>   /* NULL / size_t —— 裸机 -ffreestanding 下 stdint.h 不保证提供 */
 #include "mui_port.h"
 
 #ifdef __cplusplus
@@ -328,64 +329,46 @@ void mui_draw_line_aa(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
 void mui_draw_circle_aa(int16_t cx, int16_t cy, int16_t r,
                         uint16_t fg, uint16_t bg);
 
-/* -------- 控件：按钮 -------- */
+/* -------- 触摸 / 指针输入 -------- */
 
-/** @brief 按钮底板形状 */
+/** @brief 触摸事件类型 */
 typedef enum {
-    MUI_BTN_SHAPE_ROUND = 0,  /**< 圆角（半径取 radius，<=0 时自动 h/4 且限 8） */
-    MUI_BTN_SHAPE_RECT,       /**< 直角 */
-    MUI_BTN_SHAPE_PILL,       /**< 胶囊（半径=高/2） */
-} mui_button_shape_t;
-
-/** @brief 按钮配色与形状方案（画之前配置好，绘制时传入） */
-typedef struct {
-    uint16_t bg;              /**< 弹起底色 */
-    uint16_t bg_press;        /**< 按下底色 */
-    uint16_t fg;              /**< 文字/图标色 */
-    uint16_t border;          /**< 边框色（与 bg 同色则视觉无边框） */
-    uint8_t shape;            /**< 底板形状（mui_button_shape_t） */
-    int16_t radius;           /**< 圆角半径：<=0 自动（h/4 限 8），>0 指定（自动限 h/2） */
-} mui_button_style_t;
-
-/** @brief 默认按钮配色（蓝底白字） */
-extern const mui_button_style_t mui_button_style_default;
+    MUI_TOUCH_NONE = 0,     /**< 无事件 */
+    MUI_TOUCH_DOWN,         /**< 按下 */
+    MUI_TOUCH_MOVE,         /**< 按住移动（拖动） */
+    MUI_TOUCH_UP,           /**< 抬起（按下与抬起间发生了拖动） */
+    MUI_TOUCH_CLICK,        /**< 完整点击（按下与抬起位置接近） */
+} mui_touch_event_t;
 
 /**
- * @brief 绘制按钮（圆角底板 + 居中点阵文字 + 按下视觉反馈）
+ * @brief 喂入触摸状态（由驱动/模拟器调用，随时可调）
  *
- * 立即模式控件：无内部状态，每帧调用，按下状态由外部传入。
- * 按下时底色切换为 bg_press，文字下移 1 像素。
- * @param x        左上角横坐标
- * @param y        左上角纵坐标
- * @param w        宽度
- * @param h        高度
- * @param text     按钮文字（5x7 点阵字体，NULL 画纯色块）
- * @param pressed  0=弹起，非 0=按下
- * @param style    配色（NULL 使用 mui_button_style_default）
+ * 内部状态机自动生成事件序列（4 深度队列，一帧内按下又抬起不丢事件）。
+ * @param x        触点横坐标（屏幕像素）
+ * @param y        触点纵坐标（屏幕像素）
+ * @param pressed  0=无触摸，非 0=按下
  */
-void mui_button(int16_t x, int16_t y, int16_t w, int16_t h,
-                const char *text, uint8_t pressed,
-                const mui_button_style_t *style);
+void mui_touch_update(int16_t x, int16_t y, uint8_t pressed);
 
 /**
- * @brief 绘制图标按钮（8bpp alpha 蒙版图标[+文字]自动居中 + 按下视觉反馈）
- *
- * 图标前景色取 style->fg，与按钮底色逐像素混合，边缘平滑无锯齿。
- * 图标与文字组合整体水平居中：图标在左、文字在右，间距 4 像素；
- * 只传 icon 或只传 text 时单独居中。按下时内容整体下移 1 像素。
- * 彩色图标（多色位图）请用 mui_button + mui_draw_bitmap_key 组合实现。
- * @param x        左上角横坐标
- * @param y        左上角纵坐标
- * @param w        宽度
- * @param h        高度（图标建议不大于 h-6）
- * @param icon     alpha 蒙版资源（mui_image_alpha_t*，NULL 则不画图标）
- * @param text     按钮文字（NULL 则不画文字）
- * @param pressed  0=弹起，非 0=按下
- * @param style    配色（NULL 使用 mui_button_style_default）
+ * @brief 取走一个触摸事件（每帧循环调用直到返回 NONE）
+ * @return 事件类型；MUI_TOUCH_NONE 表示队列空
  */
-void mui_button_icon(int16_t x, int16_t y, int16_t w, int16_t h,
-                     const mui_image_alpha_t *icon, const char *text,
-                     uint8_t pressed, const mui_button_style_t *style);
+mui_touch_event_t mui_touch_poll(void);
+
+/**
+ * @brief 获取当前触点坐标（配合 poll 使用，返回事件对应坐标）
+ * @param x  输出：横坐标
+ * @param y  输出：纵坐标
+ */
+void mui_touch_get_xy(int16_t *x, int16_t *y);
+
+/**
+ * @brief 点在矩形内测试（触摸命中基础函数）
+ * @return 1 命中，0 未命中
+ */
+uint8_t mui_hit(int16_t px, int16_t py,
+                int16_t x, int16_t y, int16_t w, int16_t h);
 
 #ifdef __cplusplus
 }

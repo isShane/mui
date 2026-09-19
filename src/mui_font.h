@@ -22,12 +22,21 @@ typedef struct {
     int8_t ofs_y;           /**< 相对基线的垂直偏移 */
 } mui_glyph_dsc_t;
 
+/** @brief 字符映射段（对应 LVGL fmt_txt cmap，字符集可含多个非连续段，如数字+字母） */
+typedef struct {
+    uint16_t first_char;    /**< 本段起始字符 ASCII/Unicode */
+    uint16_t last_char;     /**< 本段结束字符（含，长度=last-first+1） */
+    uint16_t glyph_id;      /**< 本段第一个字符在 glyphs[] 中的下标 */
+} mui_lv_font_cmap_t;
+
 /** @brief LVGL 转换字体描述 */
 typedef struct {
     const uint8_t *bitmap;        /**< 8bpp 灰度位图数据 */
-    const mui_glyph_dsc_t *glyphs;/**< 字形描述数组（按字符序排列） */
-    uint8_t first_char;           /**< 首字符 ASCII 码 */
-    uint8_t last_char;            /**< 末字符 ASCII 码 */
+    const mui_glyph_dsc_t *glyphs;/**< 字形描述数组（按段顺序、段内连续排列） */
+    const mui_lv_font_cmap_t *cmaps; /**< 字符映射段表；NULL 时退化为单段(first_char~last_char) */
+    uint16_t cmap_count;          /**< cmaps 段数（0=单段，用 first_char/last_char） */
+    uint8_t first_char;           /**< 单段模式首字符 ASCII（cmap_count=0 时使用） */
+    uint8_t last_char;            /**< 单段模式末字符 ASCII（cmap_count=0 时使用） */
     uint8_t line_height;          /**< 行高（像素） */
     int8_t base_line;             /**< 基线（从行底向上） */
 } mui_lv_font_t;
@@ -57,6 +66,35 @@ void mui_lv_font_draw_char(int16_t x, int16_t y, char c, const mui_lv_font_t *f,
  */
 void mui_lv_font_draw_text(int16_t x, int16_t y, const char *s, const mui_lv_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 绘制单字符"整格覆盖"版（就地替换，无先擦后画 → 无闪烁）
+ *
+ * 覆盖矩形 = 该字符的步进宽（adv_w） × 行高（line_height）：
+ * 横向整格、纵向整行框；格内先铺背景色再叠字形像素，每行一次开窗连续写，
+ * 旧内容被直接替换而不是"擦白再重画"。
+ *
+ * 适用：等宽/定长文本原地更新（数字读数、时钟等）；要求覆盖矩形下方为纯 bg 色
+ * （格内其它内容会被涂掉）。无字形或放大后超出内部行缓冲时不绘制。
+ * @param x      该字符格左上角 x（= 行框 x + 前面字符步进累计）
+ * @param y      行框顶部 y
+ * @param c      字符
+ * @param f      字体描述
+ * @param fg     前景色
+ * @param bg     背景色（格内非字形像素写它）
+ * @param scale  整数放大倍数
+ */
+void mui_lv_font_draw_char_cell(int16_t x, int16_t y, char c,
+                                const mui_lv_font_t *f,
+                                uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 绘制字符串"整格覆盖"版（逐字符调用 draw_char_cell，步进与 draw_text 一致）
+ * @note  与 mui_lv_font_draw_text 参数含义相同，差别仅在"就地覆盖、无擦白"
+ */
+void mui_lv_font_draw_text_cell(int16_t x, int16_t y, const char *s,
+                                const mui_lv_font_t *f,
+                                uint16_t fg, uint16_t bg, int16_t scale);
 
 /**
  * @brief 计算 LVGL 字体字符串宽度

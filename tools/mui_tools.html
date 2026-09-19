@@ -453,11 +453,13 @@ function loadFontFile(file) {
         sanitizeName(file.name.replace(/\.c$/, ''), 'myfont');
       fontDrop.innerHTML = '<b>' + file.name + '</b><small>点击可重新选择</small>';
 
+      let totalChars = 0;
+      data.cmaps.forEach(c => { totalChars += c.rl; });
       let s = '字号：<b>' + data.size + 'px</b>　bpp：<b>' + data.bpp + '</b>' +
               '（渲染器仅支持 8bpp）<br>' +
-              '字符范围：<b>U+' + hex4s(data.range_start) + ' - U+' +
-              hex4s(data.range_start + data.range_length - 1) + '</b>，共 <b>' +
-              data.range_length + '</b> 个字形<br>' +
+              '字符共 <b>' + totalChars + '</b> 个，映射段 <b>' + data.cmaps.length +
+              '</b>：' + data.cmaps.map(c => 'U+' + hex4s(c.rs) + '-U+' +
+              hex4s(c.rs + c.rl - 1)).join('，') + '<br>' +
               '行高 ' + data.line_height + '，基线 ' + data.base_line +
               '，位图 <b>' + data.bitmap.length + ' 字节</b> Flash';
       if (data.bpp !== 8) s += '<br><span class="warn">警告：非 8bpp，当前渲染器无法使用，请在 LVGL 工具重导出（bpp=8）</span>';
@@ -465,10 +467,12 @@ function loadFontFile(file) {
 
       const charsEl = document.getElementById('fontChars');
       let chars = '';
-      for (let i = 0; i < data.range_length; i++) {
-        const cp = data.range_start + i;
-        chars += (cp >= 32 && cp < 127) ? String.fromCharCode(cp) : '·';
-      }
+      data.cmaps.forEach(c => {
+        for (let i = 0; i < c.rl; i++) {
+          const cp = c.rs + i;
+          chars += (cp >= 32 && cp < 127) ? String.fromCharCode(cp) : '·';
+        }
+      });
       charsEl.textContent = chars;
       charsEl.style.display = 'block';
       document.getElementById('fontGen').disabled = false;
@@ -499,9 +503,34 @@ function parseLvglFont(src) {
   while ((dm = dscRe.exec(src)))
     data.dscs.push(dm.slice(1, 7).map(Number));
 
-  m = src.match(/\.range_start\s*=\s*(\d+),\s*\.range_length\s*=\s*(\d+),\s*\.glyph_id_start\s*=\s*(\d+)/);
-  if (!m) throw new Error('未找到 cmap 或 cmap 不是 FORMAT0_TINY 连续段');
-  data.range_start = +m[1]; data.range_length = +m[2]; data.glyph_id_start = +m[3];
+  // 收集全部映射段（支持多段；FORMAT0_FULL 段带 glyph_id_ofs_list 偏移表，
+  // 此时字符字形非连续递增，须逐字符用 glyph_id_start + ofs[i] 定位）
+  // 1) 先收集所有命名偏移表数组（名字可能是 glyph_id_ofs_list 或带 _0 等后缀）
+  //    数组体可能是多行书写，必须用 [\s\S] 跨行匹配
+  const ofsArrays = {};
+  let om;
+  const ofsRe = /(glyph_id_ofs_list\w*)\[\s*\]\s*=\s*\{([\s\S]*?)\}/g;
+  while ((om = ofsRe.exec(src)))
+    ofsArrays[om[1]] = (om[2].match(/\d+/g) || []).map(Number);
+
+  // 2) 解析每段 cmap（rs/rl/gs + 所属偏移表名）
+  const cmapRe = /\.range_start\s*=\s*(\d+)\s*,\s*\.range_length\s*=\s*(\d+)\s*,\s*\.glyph_id_start\s*=\s*(\d+),[\s\S]*?\.glyph_id_ofs_list\s*=\s*(\w+)/g;
+  data.cmaps = [];
+  let cm;
+  while ((cm = cmapRe.exec(src))) {
+    const name = cm[4];
+    const ofs = (name === 'NULL') ? null : (ofsArrays[name] || null);
+    // 自检：声明了偏移表却解析不到 → 阻止生成错误文件
+    if (name !== 'NULL' && !ofs) {
+      throw new Error('段 U+' + hex4s(+cm[1]) + ' 声明偏移表 ' + name + '，但未能解析，请确认源文件包含该表');
+    }
+    data.cmaps.push({ rs: +cm[1], rl: +cm[2], gs: +cm[3], ofs });
+  }
+  if (!data.cmaps.length) throw new Error('未找到 cmap 或 cmap 不是 FORMAT0');
+  // 兼容旧单段字段（首段，供统计/预览用）
+  data.range_start = data.cmaps[0].rs;
+  data.range_length = data.cmaps[0].rl;
+  data.glyph_id_start = data.cmaps[0].gs;
 
   m = src.match(/\.line_height\s*=\s*(\d+)/);
   if (!m) throw new Error('未找到 line_height');
@@ -542,10 +571,21 @@ document.getElementById('fontDl').onclick = () => {
 /** 生成 C/H 文本（与 tools/lvgl_font_conv.py 输出格式一致） */
 function buildFontAsset(name) {
   const d = fontState.data;
-  const gs = d.glyph_id_start;
-  const glyphs = [];
-  for (let i = 0; i < d.range_length; i++) glyphs.push(d.dscs[gs + i]);
   const up = name.toUpperCase();
+
+  // 按映射段顺序拼接 glyphs，同时记录每段在 glyphs[] 中的起始下标。
+  // FULL 段用 glyph_id_start+ofs[i]、TINY 段用 glyph_id_start+i 逐字符取字形，
+  // 使段内字符仍按 (first..last) 连续排列，渲染端按连续段索引即可。
+  const glyphs = [];
+  const cmapRows = [];
+  d.cmaps.forEach(c => {
+    const segStart = glyphs.length;
+    for (let i = 0; i < c.rl; i++) {
+      const gid = c.gs + (c.ofs ? c.ofs[i] : i);
+      glyphs.push(d.dscs[gid]);
+    }
+    cmapRows.push('    {' + c.rs + ', ' + (c.rs + c.rl - 1) + ', ' + segStart + '},');
+  });
 
   const bmRows = [];
   let row = [];
@@ -555,21 +595,29 @@ function buildFontAsset(name) {
   }
   if (row.length) bmRows.push('    ' + row.join(''));
 
+  // 头注释：列出所有映射段（多段时用逗号分隔）
+  const rangeNote = d.cmaps.map(c => hex4s(c.rs) + '-' + hex4s(c.rs + c.rl - 1)).join('，');
+
   const cText = '/**\n * @file mui_font_' + name + '.c\n' +
-    ' * @brief LVGL 转换字体：' + name + '（' + d.size + 'px，' + d.bpp + 'bpp，U+' +
-    hex4s(d.range_start) + '-U+' + hex4s(d.range_start + d.range_length - 1) + '）\n' +
+    ' * @brief LVGL 转换字体：' + name + '（' + d.size + 'px，' + d.bpp + 'bpp，映射 ' +
+    d.cmaps.length + ' 段：' + rangeNote + '）\n' +
     ' * 由 tools/mui_tools.html 生成，勿手工修改\n */\n\n' +
     '#include "mui_font.h"\n#include "mui_font_' + name + '.h"\n\n' +
     '/* -------- 字形位图（' + d.bitmap.length + ' 字节） -------- */\n' +
     'static const uint8_t ' + name + '_bitmap[] = {\n' + bmRows.join('\n') + '\n};\n\n' +
-    '/* -------- 字形描述 -------- */\n' +
+    '/* -------- 字形描述（按映射段顺序排列） -------- */\n' +
     'static const mui_glyph_dsc_t ' + name + '_glyphs[] = {\n' +
     glyphs.map(g => '    {' + g.join(', ') + '},').join('\n') + '\n};\n\n' +
+    '/* -------- 字符映射段 -------- */\n' +
+    'static const mui_lv_font_cmap_t ' + name + '_cmaps[] = {\n' +
+    cmapRows.join('\n') + '\n};\n\n' +
     'const mui_lv_font_t ' + name + ' = {\n' +
     '    .bitmap = ' + name + '_bitmap,\n' +
     '    .glyphs = ' + name + '_glyphs,\n' +
-    '    .first_char = ' + d.range_start + ',\n' +
-    '    .last_char = ' + (d.range_start + d.range_length - 1) + ',\n' +
+    '    .cmaps = ' + name + '_cmaps,\n' +
+    '    .cmap_count = ' + d.cmaps.length + ',\n' +
+    '    .first_char = ' + d.cmaps[0].rs + ',\n' +
+    '    .last_char = ' + (d.cmaps[d.cmaps.length - 1].rs + d.cmaps[d.cmaps.length - 1].rl - 1) + ',\n' +
     '    .line_height = ' + d.line_height + ',\n' +
     '    .base_line = ' + d.base_line + ',\n};\n';
 

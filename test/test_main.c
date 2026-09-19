@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file test_main.c
  * @brief MUI 自动化测试：边界裁剪安全性 + 图元几何正确性 + 渲染测试图
  */
@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "mui.h"
+#include "mui_font.h"
+#include "mui_label.h"
 #include "sim_helper.h"
 
 /* 测试背景色：所有"图形外部"断言跟随此色，改背景只需改这一处 */
@@ -259,6 +261,211 @@ static void test_triangle(void)
     CHECK(px(30, 29) == TEST_BG, "退化线上方无像素");
 }
 
+/* -------- 测试：文本标签增量更新 -------- */
+
+/** @brief 参考帧（整串一次性绘制的期望结果） */
+static uint16_t label_expect[SIM_W * SIM_H];
+
+/* -------- 测试用 LVGL 字体：3 个 3x5 字形，adv_w 各不相同（比例步进） -------- */
+
+/** @brief 像素步进宽度转 adv_w（1/16 像素定点） */
+#define LV_ADV(px) ((uint16_t)((px) * 16))
+
+static const uint8_t lv_test_bitmap[] = {
+    0, 255, 0, 255, 255, 0, 0, 255, 0, 0, 255, 0, 255, 255, 255,   /* '1' */
+    255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, /* '2' */
+    255, 255, 0, 0, 0, 255, 0, 255, 0, 0, 0, 255, 255, 255, 0,     /* '3' */
+};
+
+static const mui_glyph_dsc_t lv_test_glyphs[] = {
+    {0,  LV_ADV(3), 3, 5, 0, 0},
+    {15, LV_ADV(4), 3, 5, 0, 0},
+    {30, LV_ADV(6), 3, 5, 0, 0},
+};
+
+static const mui_lv_font_cmap_t lv_test_cmap[] = {
+    {'1', '3', 0},
+};
+
+static const mui_lv_font_t lv_test_font = {
+    lv_test_bitmap, lv_test_glyphs, lv_test_cmap, 1, 0, 0, 8, 2
+};
+
+/** @brief 等宽测试字体：三字形 adv_w 相同，用于命中整格覆盖快路径 */
+static const mui_glyph_dsc_t lv_mono_glyphs[] = {
+    {0,  LV_ADV(4), 3, 5, 0, 0},
+    {15, LV_ADV(4), 3, 5, 0, 0},
+    {30, LV_ADV(4), 3, 5, 0, 0},
+};
+
+static const mui_lv_font_t lv_mono_font = {
+    lv_test_bitmap, lv_mono_glyphs, lv_test_cmap, 1, 0, 0, 8, 2
+};
+
+/**
+ * @brief 内部：逐像素比对当前帧缓冲与参考帧
+ * @param msg 断言失败时的描述
+ */
+static void check_fb_equal(const char *msg)
+{
+    int32_t i;
+    int32_t diff = 0;
+
+    for (i = 0; i < (int32_t)SIM_W * SIM_H; i++) {
+        if (sim_get_fb()[i] != label_expect[i]) {
+            diff++;
+        }
+    }
+    if (diff != 0) {
+        printf("[FAIL] %s（不一致像素 %d，line %d）\n", msg, (int)diff, __LINE__);
+        test_failed++;
+    }
+}
+
+/**
+ * @brief 内部：对给定字体跑一组增量更新用例，与整串重绘逐像素比对
+ * @param font  字体（NULL 用 5x7 点阵）
+ * @param cases 用例表，每项 [初值, 终值]
+ * @param n     用例数
+ * @param who   字体名（用于失败信息）
+ */
+static void label_diff_run(const void *font, const char *cases[][2],
+                           size_t n, const char *who)
+{
+    const int16_t x = 40;
+    const int16_t y = 40;
+    mui_label_t lbl;
+    mui_label_t ref;
+    char msg[96];
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        /* 参考：干净背景上一次性绘制最终文本 */
+        mui_clear_screen(TEST_BG);
+        mui_label_init(&ref, x, y, font, MUI_BLACK, TEST_BG, 1);
+        mui_label_set_text(&ref, cases[i][1]);
+        memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+        /* 实际：先画初值，再增量更新到最终文本 */
+        mui_clear_screen(TEST_BG);
+        mui_label_init(&lbl, x, y, font, MUI_BLACK, TEST_BG, 1);
+        mui_label_set_text(&lbl, cases[i][0]);
+        mui_label_set_text(&lbl, cases[i][1]);
+
+        sprintf(msg, "label %s 用例%d 增量与整串不一致", who, (int)i);
+        check_fb_equal(msg);
+    }
+}
+
+/**
+ * @brief 测试：增量更新后的画面必须与整串重绘完全一致
+ */
+static void test_label_diff(void)
+{
+    /* 覆盖：同位替换 / 前缀变化 / 变长 / 变短 / 全变 / 中间插入 / 不变 / 清空 */
+    static const char *cases5x7[][2] = {
+        {"12:01", "12:02"},
+        {"12:01", "12:00"},
+        {"9:59",  "10:00"},
+        {"1",     "12:34"},
+        {"12:34", "1"},
+        {"12:01", "22:11"},
+        {"12:09", "12:10"},
+        {"AD",    "A:D"},
+        {"12:01", "12:01"},
+        {"12:34", ""},
+        {"",      "12:34"},
+    };
+    /* LVGL 字体：adv_w 各异（比例步进），字符宽度不同，最容易暴露起点算错 */
+    static const char *cases_lv[][2] = {
+        {"123", "121"},
+        {"123", "223"},
+        {"1",   "123"},
+        {"123", "1"},
+        {"123", "113"},
+        {"123", "123"},
+        /* UTF-8：公共前缀停在多字节字符内部，须回退到首字节边界 */
+        {"a\xE4\xBD\xA0", "a\xE4\xBB\xA0"},
+        {"a\xE4\xBD\xA0" "b", "ab\xE4\xBD\xA0"},
+    };
+    /* 等宽字体 + 等长文本：命中 MUI_LABEL_OPA_COVER 整格覆盖快路径 */
+    static const char *cases_mono[][2] = {
+        {"123", "121"},
+        {"123", "333"},
+        {"113", "121"},
+        {"123", "123"},
+    };
+    mui_label_t lbl;
+
+    /* 空指针安全 */
+    mui_label_set_text(NULL, "X");
+    mui_label_init(&lbl, 40, 40, NULL, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_text(&lbl, NULL);
+
+    label_diff_run(NULL, cases5x7,
+                   sizeof(cases5x7) / sizeof(cases5x7[0]), "5x7");
+    label_diff_run(&lv_test_font, cases_lv,
+                   sizeof(cases_lv) / sizeof(cases_lv[0]), "LVGL");
+    label_diff_run(&lv_mono_font, cases_mono,
+                   sizeof(cases_mono) / sizeof(cases_mono[0]), "LVGL等宽");
+}
+
+/**
+ * @brief 测试：增量更新不触碰差异区间之外的像素，相同文本不产生写入
+ */
+static void test_label_span(void)
+{
+    mui_label_t lbl;
+    const int16_t x = 40;
+    const int16_t y = 40;
+    /* "12:01" 宽 29px，哨兵放在 x+30：整块擦会波及，增量擦不波及 */
+    const int16_t sx = (int16_t)(x + 30);
+    const int16_t sy = 43;
+
+    mui_clear_screen(TEST_BG);
+    mui_label_init(&lbl, x, y, NULL, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_text(&lbl, "12:01");
+
+    mui_draw_pixel(sx, sy, MUI_GREEN);
+    mui_label_set_text(&lbl, "12:02");
+    CHECK(px(sx, sy) == MUI_GREEN, "增量更新未擦除差异区间外的像素");
+
+    /* 文本完全相同时不擦不画 */
+    mui_clear_screen(TEST_BG);
+    mui_label_init(&lbl, x, y, NULL, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_text(&lbl, "12:01");
+    mui_draw_pixel(sx, sy, MUI_GREEN);
+    mui_label_set_text(&lbl, "12:01");
+    CHECK(px(sx, sy) == MUI_GREEN, "相同文本不擦不画");
+}
+
+/**
+ * @brief 测试：精确模式下只重画变化字符，不触碰前一个字符的区域
+ */
+static void test_label_exact_span(void)
+{
+#if MUI_LABEL_SAFE_SPAN
+    /* 安全模式：重画起点本就回退一个字符，本用例不适用 */
+    return;
+#else
+    mui_label_t lbl;
+    const int16_t x = 40;
+    const int16_t y = 40;
+    /* "12:01"：'0' 占 x+18..x+23，'1' 占 x+24..x+28。
+       哨兵放在 '0' 区间内——精确模式擦除自 x+24 起不波及，
+       安全模式擦除自 x+18 起会被擦掉 */
+    const int16_t sx = (int16_t)(x + 20);
+
+    mui_clear_screen(TEST_BG);
+    mui_label_init(&lbl, x, y, NULL, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_text(&lbl, "12:01");
+
+    mui_draw_pixel(sx, 43, MUI_GREEN);
+    mui_label_set_text(&lbl, "12:02");
+    CHECK(px(sx, 43) == MUI_GREEN, "精确模式未重画前缀字符");
+#endif
+}
+
 /* -------- 渲染测试图并导出 PNG -------- */
 static void render_demo(void)
 {
@@ -305,6 +512,9 @@ int main(void)
     test_circle();
     test_ellipse();
     test_triangle();
+    test_label_diff();
+    test_label_span();
+    test_label_exact_span();
 
     render_demo();
 
