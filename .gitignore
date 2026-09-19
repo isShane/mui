@@ -23,6 +23,10 @@ cmake_install.cmake
 test_output.png
 test_output.ppm
 
+# -------- Python --------
+__pycache__/
+*.pyc
+
 # -------- 系统文件 --------
 Thumbs.db
 .DS_Store
