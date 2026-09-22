@@ -1,6 +1,6 @@
 /**
  * @file mui_button.c
- * @brief MUI 按钮控件实现（立即模式绘制 + 保留模式对象）
+ * @brief MUI 按钮控件实现（保留模式对象）
  */
 
 #include "mui_button.h"
@@ -13,7 +13,7 @@ const mui_button_style_t mui_button_style_default = {
     MUI_RGB565(0x2A, 0x52, 0x80),   /* bg_press：深蓝 */
     MUI_WHITE,                      /* fg：白字 */
     MUI_BLACK,                      /* border：黑边 */
-    MUI_BTN_SHAPE_ROUND,            /* shape：圆角 */
+    MUI_BUTTON_SHAPE_ROUND,            /* shape：圆角 */
     0                               /* radius：自动（h/4 限 8） */
 };
 
@@ -25,11 +25,11 @@ static int16_t button_radius(int16_t h, const mui_button_style_t *s)
     int16_t r;
 
     switch (s->shape) {
-    case MUI_BTN_SHAPE_RECT:
+    case MUI_BUTTON_SHAPE_RECT:
         return 0;
-    case MUI_BTN_SHAPE_PILL:
+    case MUI_BUTTON_SHAPE_PILL:
         return (int16_t)(h / 2);
-    default:    /* MUI_BTN_SHAPE_ROUND */
+    default:    /* MUI_BUTTON_SHAPE_ROUND */
         r = s->radius > 0 ? s->radius : (int16_t)(h / 4);
         if (s->radius <= 0 && r > 8) {
             r = 8;
@@ -46,73 +46,15 @@ static void button_base(int16_t x, int16_t y, int16_t w, int16_t h,
 {
     int16_t r = button_radius(h, s);
 
-    mui_fill_round_rect(x, y, w, h, r, bg);
-    mui_draw_round_rect(x, y, w, h, r, s->border);
-}
-
-/**
- * @brief 绘制按钮（圆角底板 + 居中点阵文字 + 按下视觉反馈）
- */
-void mui_button(int16_t x, int16_t y, int16_t w, int16_t h,
-                const char *text, uint8_t pressed,
-                const mui_button_style_t *style)
-{
-    const mui_button_style_t *s = style ? style : &mui_button_style_default;
-    uint16_t bg = pressed ? s->bg_press : s->bg;
-
-    button_base(x, y, w, h, s, bg);
-
-    /* 居中文字（按下仅变底色，位置不动） */
-    if (text != NULL && text[0] != '\0') {
-        int16_t tw = mui_font_text_width(text, 1, 1);
-        int16_t tx = (int16_t)(x + (w - tw) / 2);
-        int16_t ty = (int16_t)(y + (h - 7) / 2);
-
-        if (tx < x + 2) {
-            tx = (int16_t)(x + 2);
-        }
-        mui_font_draw_text(tx, ty, text, s->fg, 1, 1);
-    }
-}
-
-/**
- * @brief 绘制图标按钮（8bpp alpha 蒙版图标[+文字]自动居中 + 按下视觉反馈）
- *
- * 图标前景色取 style->fg，与按钮底色逐像素混合，边缘平滑无锯齿。
- */
-void mui_button_icon(int16_t x, int16_t y, int16_t w, int16_t h,
-                     const mui_image_alpha_t *icon, const char *text,
-                     uint8_t pressed, const mui_button_style_t *style)
-{
-    const mui_button_style_t *s = style ? style : &mui_button_style_default;
-    uint16_t bg = pressed ? s->bg_press : s->bg;
-    int16_t iw = icon ? icon->w : 0;
-    int16_t tw = (text != NULL && text[0] != '\0') ? mui_font_text_width(text, 1, 1) : 0;
-    int16_t gap = (iw > 0 && tw > 0) ? 4 : 0;
-    int16_t total = (int16_t)(iw + gap + tw);
-    int16_t sx = (int16_t)(x + (w - total) / 2);
-    int16_t cy = (int16_t)(y + h / 2);
-
-    button_base(x, y, w, h, s, bg);
-
-    /* 图标（与按钮底色逐像素混合，边缘平滑） */
-    if (icon != NULL) {
-        mui_draw_bitmap_alpha(sx, (int16_t)(cy - icon->h / 2),
-                              icon->w, icon->h, icon->data, s->fg, bg);
-    }
-
-    /* 文字（跟随图标右侧） */
-    if (tw > 0) {
-        mui_font_draw_text((int16_t)(sx + iw + gap), (int16_t)(cy - 3),
-                           text, s->fg, 1, 1);
-    }
+    mui_round_rect_fill(x, y, w, h, r, bg);
+    mui_round_rect_draw(x, y, w, h, r, s->border);
 }
 
 /* -------- OO 按钮：对象接口 -------- */
 
 void mui_button_init(mui_button_t *btn, int16_t x, int16_t y, int16_t w, int16_t h,
                      const mui_button_style_t *style, const char *text,
-                     const mui_image_alpha_t *icon)
+                     const mui_image_mask_t *icon)
 {
     if (btn == NULL) {
         return;
@@ -124,7 +66,7 @@ void mui_button_init(mui_button_t *btn, int16_t x, int16_t y, int16_t w, int16_t
     btn->style = style;       /* NULL 在 draw 时 fallback 默认 */
     btn->text = text;
     btn->icon = icon;
-    btn->font = NULL;         /* 默认 5x7 点阵 */
+    btn->font = NULL;         /* 默认不画文字 */
     btn->pressed = 0;
     btn->enabled = 1;
     btn->visible = 1;
@@ -151,12 +93,12 @@ void mui_button_set_text(mui_button_t *btn, const char *text)
     if (btn) { btn->text = text; }
 }
 
-void mui_button_set_icon(mui_button_t *btn, const mui_image_alpha_t *icon)
+void mui_button_set_icon(mui_button_t *btn, const mui_image_mask_t *icon)
 {
     if (btn) { btn->icon = icon; }
 }
 
-void mui_button_set_font(mui_button_t *btn, const void *font)
+void mui_button_set_font(mui_button_t *btn, const mui_font_t *font)
 {
     if (btn) { btn->font = font; }
 }
@@ -182,8 +124,8 @@ static void button_draw_disabled_overlay(const mui_button_t *btn,
     uint16_t dim_fg = MUI_RGB565(0x77, 0x77, 0x77); /* 前景变深灰 */
 
     /* 灰色底板直接覆盖（简化：禁用态不叠底，直接画灰底+深灰边） */
-    mui_fill_round_rect(btn->x, btn->y, btn->w, btn->h, r, gray);
-    mui_draw_round_rect(btn->x, btn->y, btn->w, btn->h, r, dim_fg);
+    mui_round_rect_fill(btn->x, btn->y, btn->w, btn->h, r, gray);
+    mui_round_rect_draw(btn->x, btn->y, btn->w, btn->h, r, dim_fg);
 }
 
 void mui_button_draw(const mui_button_t *btn)
@@ -213,16 +155,9 @@ void mui_button_draw(const mui_button_t *btn)
         return;
     }
 
-    /* 文字像素宽（5x7 或抗锯齿字体） */
-    if (btn->text != NULL && btn->text[0] != '\0') {
-        if (btn->font != NULL) {
-            tw = mui_lv_font_text_width(btn->text, (const mui_lv_font_t *)btn->font, 1);
-        } else {
-            tw = mui_font_text_width(btn->text, 1, 1);
-        }
-    } else {
-        tw = 0;
-    }
+    /* 文字像素宽（无字体则不画文字） */
+    tw = (btn->text != NULL && btn->text[0] != '\0' && btn->font != NULL)
+         ? mui_text_width(btn->text, btn->font, 1) : 0;
 
     /* 计算图标 + 文字组合尺寸（内容始终居中，按下仅变底色） */
     iw = btn->icon ? btn->icon->w : 0;
@@ -233,23 +168,17 @@ void mui_button_draw(const mui_button_t *btn)
 
     /* 图标 */
     if (btn->icon != NULL) {
-        mui_draw_bitmap_alpha(sx, (int16_t)(cy - btn->icon->h / 2),
+        mui_image_draw_mask(sx, (int16_t)(cy - btn->icon->h / 2),
                               btn->icon->w, btn->icon->h,
                               btn->icon->data, s->fg, bg);
     }
 
-    /* 文字 */
+    /* 文字：行框垂直居中（要求字体 line_height ≤ 按钮高） */
     if (tw > 0) {
         int16_t tx = (int16_t)(sx + iw + gap);
-        if (btn->font != NULL) {
-            /* 抗锯齿字体：行框垂直居中（line_height 需 ≤ 按钮高） */
-            const mui_lv_font_t *f = (const mui_lv_font_t *)btn->font;
-            int16_t ty = (int16_t)(btn->y + (btn->h - f->line_height) / 2);
-            mui_lv_font_draw_text(tx, ty, btn->text, f, s->fg, bg, 1);
-        } else {
-            mui_font_draw_text(tx, (int16_t)(cy - 3),
-                               btn->text, s->fg, 1, 1);
-        }
+        int16_t ty = (int16_t)(btn->y + (btn->h - btn->font->line_height) / 2);
+
+        mui_text_draw(tx, ty, btn->text, btn->font, s->fg, bg, 1);
     }
 }
 
@@ -263,7 +192,7 @@ uint8_t mui_button_touch(mui_button_t *btn, mui_touch_event_t ev)
     }
 
     mui_touch_get_xy(&x, &y);
-    hit = mui_hit(x, y, btn->x, btn->y, btn->w, btn->h);
+    hit = mui_rect_contains(btn->x, btn->y, btn->w, btn->h, x, y);
 
     switch (ev) {
     case MUI_TOUCH_DOWN:

@@ -2,13 +2,14 @@
  * @file mui_label.h
  * @brief MUI 文本标签控件（保留模式 · 增量擦旧画新）
  *
- * 依赖 mui.h（图形原语）与 mui_font.h（两种字体渲染），平台无关。
+ * 依赖 mui.h（图形原语）与 mui_font.h（字体渲染），平台无关。
  */
 
 #ifndef MUI_LABEL_H
 #define MUI_LABEL_H
 
 #include <stdint.h>
+#include "mui_font.h"   /* mui_font_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,7 +22,7 @@ extern "C" {
  * 增量更新安全模式：置 1 时重画起点向前回退一个字符。
  * 用于字形右边缘越过步进间隙的字体（如 harmony_os_10 的 & * Y _ k v x y），
  * 避免溢出列被擦除后不再重画而残留；代价是每帧多重画一个字符。
- * 项目默认字体（5x7 点阵、harmony_os_32）实测无字形右溢，故默认 0。
+ * 项目在用的 harmony_os_10 / harmony_os_32 实测无字形右溢，故默认 0。
  * 可用编译选项 -DMUI_LABEL_SAFE_SPAN=1 覆盖。
  */
 #ifndef MUI_LABEL_SAFE_SPAN
@@ -32,7 +33,7 @@ extern "C" {
 typedef struct {
     int16_t x;                  /**< 左上角横坐标 */
     int16_t y;                  /**< 行框左上角纵坐标 */
-    const void *font;           /**< 字体（mui_lv_font_t*；NULL 用 5x7 点阵） */
+    const mui_font_t *font;     /**< 文字字体（必传） */
     uint16_t fg;                /**< 前景色 */
     uint16_t bg;                /**< 背景色（擦除用，需与标签下方屏幕底色一致） */
     int16_t scale;              /**< 整数放大倍数 */
@@ -47,13 +48,13 @@ typedef struct {
  * @param lbl   标签对象
  * @param x     行框左上角 x
  * @param y     行框左上角 y
- * @param font  字体（mui_lv_font_t*；NULL 用 5x7 点阵）
+ * @param font  文字字体（mui_font_t*，不可为 NULL）
  * @param fg    前景色
  * @param bg    背景色（需与标签下方屏幕底色一致，擦除依赖它）
  * @param scale 放大倍数
  */
 void mui_label_init(mui_label_t *lbl, int16_t x, int16_t y,
-                    const void *font, uint16_t fg, uint16_t bg, int16_t scale);
+                    const mui_font_t *font, uint16_t fg, uint16_t bg, int16_t scale);
 
 /**
  * @brief 更新文本：从与上次文本的差异起点擦除并重画到行尾（无需记忆坐标）

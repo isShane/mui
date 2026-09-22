@@ -260,11 +260,11 @@ static const mui_glyph_dsc_t harmony_os_32_glyphs[] = {
 };
 
 /* -------- 字符映射段 -------- */
-static const mui_lv_font_cmap_t harmony_os_32_cmaps[] = {
+static const mui_font_cmap_t harmony_os_32_cmaps[] = {
     {48, 58, 0},
 };
 
-const mui_lv_font_t harmony_os_32 = {
+const mui_font_t harmony_os_32 = {
     .bitmap = harmony_os_32_bitmap,
     .glyphs = harmony_os_32_glyphs,
     .cmaps = harmony_os_32_cmaps,

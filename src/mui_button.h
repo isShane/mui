@@ -1,26 +1,28 @@
 /**
  * @file mui_button.h
- * @brief MUI 按钮控件（立即模式绘制 + 保留模式对象）
+ * @brief MUI 按钮控件（保留模式对象 · OO 风格）
  *
  * 依赖 mui.h（图形原语/触摸）与 mui_font.h（文字渲染），平台无关。
+ * 用法：mui_button_init 一次 → 改状态用 set_* → 每帧 mui_button_draw。
  */
 
 #ifndef MUI_BUTTON_H
 #define MUI_BUTTON_H
 
 #include "mui.h"
+#include "mui_font.h"   /* mui_font_t：文字渲染 */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* -------- 立即模式按钮（无状态，每帧调用） -------- */
+/* -------- 按钮底板形状与配色 -------- */
 
 /** @brief 按钮底板形状 */
 typedef enum {
-    MUI_BTN_SHAPE_ROUND = 0,  /**< 圆角（半径取 radius，<=0 时自动 h/4 且限 8） */
-    MUI_BTN_SHAPE_RECT,       /**< 直角 */
-    MUI_BTN_SHAPE_PILL,       /**< 胶囊（半径=高/2） */
+    MUI_BUTTON_SHAPE_ROUND = 0,  /**< 圆角（半径取 radius，<=0 时自动 h/4 且限 8） */
+    MUI_BUTTON_SHAPE_RECT,       /**< 直角 */
+    MUI_BUTTON_SHAPE_PILL,       /**< 胶囊（半径=高/2） */
 } mui_button_shape_t;
 
 /** @brief 按钮配色与形状方案（画之前配置好，绘制时传入） */
@@ -36,43 +38,6 @@ typedef struct {
 /** @brief 默认按钮配色（蓝底白字） */
 extern const mui_button_style_t mui_button_style_default;
 
-/**
- * @brief 绘制按钮（圆角底板 + 居中点阵文字 + 按下视觉反馈）
- *
- * 立即模式控件：无内部状态，每帧调用，按下状态由外部传入。
- * 按下时底色切换为 bg_press，文字下移 1 像素。
- * @param x        左上角横坐标
- * @param y        左上角纵坐标
- * @param w        宽度
- * @param h        高度
- * @param text     按钮文字（5x7 点阵字体，NULL 画纯色块）
- * @param pressed  0=弹起，非 0=按下
- * @param style    配色（NULL 使用 mui_button_style_default）
- */
-void mui_button(int16_t x, int16_t y, int16_t w, int16_t h,
-                const char *text, uint8_t pressed,
-                const mui_button_style_t *style);
-
-/**
- * @brief 绘制图标按钮（8bpp alpha 蒙版图标[+文字]自动居中 + 按下视觉反馈）
- *
- * 图标前景色取 style->fg，与按钮底色逐像素混合，边缘平滑无锯齿。
- * 图标与文字组合整体水平居中：图标在左、文字在右，间距 4 像素；
- * 只传 icon 或只传 text 时单独居中。按下时内容整体下移 1 像素。
- * 彩色图标（多色位图）请用 mui_button + mui_draw_bitmap_key 组合实现。
- * @param x        左上角横坐标
- * @param y        左上角纵坐标
- * @param w        宽度
- * @param h        高度（图标建议不大于 h-6）
- * @param icon     alpha 蒙版资源（mui_image_alpha_t*，NULL 则不画图标）
- * @param text     按钮文字（NULL 则不画文字）
- * @param pressed  0=弹起，非 0=按下
- * @param style    配色（NULL 使用 mui_button_style_default）
- */
-void mui_button_icon(int16_t x, int16_t y, int16_t w, int16_t h,
-                     const mui_image_alpha_t *icon, const char *text,
-                     uint8_t pressed, const mui_button_style_t *style);
-
 /* -------- 按钮对象（保留模式 · OO 风格） -------- */
 
 /** @brief 按钮对象：静态分配，一次 init 后只需更新状态，每帧 draw */
@@ -83,8 +48,8 @@ typedef struct {
     int16_t h;                         /**< 高度 */
     const mui_button_style_t *style;   /**< 样式（指针，NULL 用默认） */
     const char *text;                  /**< 文字（指针，由调用者管理存储） */
-    const mui_image_alpha_t *icon;     /**< alpha 蒙版图标（NULL 则不画） */
-    const void *font;                  /**< 抗锯齿字体（将 mui_lv_font_t* 传入，NULL 用 5x7 点阵） */
+    const mui_image_mask_t *icon;     /**< alpha 蒙版图标（NULL 则不画） */
+    const mui_font_t *font;            /**< 文字字体（NULL 则不画文字） */
     uint8_t pressed;                   /**< 0=弹起，非 0=按下 */
     uint8_t enabled;                   /**< 0=禁用（灰色遮罩），非 0=可用 */
     uint8_t visible;                   /**< 0=隐藏，非 0=显示 */
@@ -104,7 +69,7 @@ typedef struct {
  */
 void mui_button_init(mui_button_t *btn, int16_t x, int16_t y, int16_t w, int16_t h,
                      const mui_button_style_t *style, const char *text,
-                     const mui_image_alpha_t *icon);
+                     const mui_image_mask_t *icon);
 
 /** @brief 设置按下状态 */
 void mui_button_set_pressed(mui_button_t *btn, uint8_t pressed);
@@ -119,10 +84,10 @@ void mui_button_set_visible(mui_button_t *btn, uint8_t visible);
 void mui_button_set_text(mui_button_t *btn, const char *text);
 
 /** @brief 设置图标 */
-void mui_button_set_icon(mui_button_t *btn, const mui_image_alpha_t *icon);
+void mui_button_set_icon(mui_button_t *btn, const mui_image_mask_t *icon);
 
-/** @brief 设置抗锯齿字体（传入 mui_lv_font_t*，NULL 恢复 5x7 点阵） */
-void mui_button_set_font(mui_button_t *btn, const void *font);
+/** @brief 设置文字字体（NULL 则不画文字） */
+void mui_button_set_font(mui_button_t *btn, const mui_font_t *font);
 
 /** @brief 移动按钮位置 */
 void mui_button_set_pos(mui_button_t *btn, int16_t x, int16_t y);

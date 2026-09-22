@@ -132,12 +132,12 @@ def emit_c(data, name):
     lines.append('};')
     lines.append('')
     lines.append('/* -------- 字符映射段 -------- */')
-    lines.append('static const mui_lv_font_cmap_t %s_cmaps[] = {' % name)
+    lines.append('static const mui_font_cmap_t %s_cmaps[] = {' % name)
     for first, last, gid in cmaps:
         lines.append('    {%d, %d, %d},' % (first, last, gid))
     lines.append('};')
     lines.append('')
-    lines.append('const mui_lv_font_t %s = {' % name)
+    lines.append('const mui_font_t %s = {' % name)
     lines.append('    .bitmap = %s_bitmap,' % name)
     lines.append('    .glyphs = %s_glyphs,' % name)
     lines.append('    .cmaps = %s_cmaps,' % name)
@@ -162,7 +162,7 @@ def emit_h(name):
 
 #include "mui_font.h"
 
-extern const mui_lv_font_t %s;
+extern const mui_font_t %s;
 
 #endif /* MUI_FONT_%s_H */
 """ % (name, name, name.upper(), name.upper(), name, name.upper())
@@ -179,9 +179,9 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     c_path = os.path.join(out_dir, 'mui_font_%s.c' % name)
     h_path = os.path.join(out_dir, 'mui_font_%s.h' % name)
-    with open(c_path, 'w', encoding='utf-8') as f:
+    with open(c_path, 'w', encoding='utf-8', newline='\n') as f:
         f.write(emit_c(data, name))
-    with open(h_path, 'w', encoding='utf-8') as f:
+    with open(h_path, 'w', encoding='utf-8', newline='\n') as f:
         f.write(emit_h(name))
     print('已生成 %s / %s（%d 个字形，U+%04X 起）' %
           (c_path, h_path, data['range_length'], data['range_start']))

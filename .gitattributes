@@ -1,0 +1,24 @@
+# MUI 仓库行尾与文件类型约定
+#
+# 背景：本仓库历史上混用过 LF 与 CRLF（src/mui_progressbar.*、test/test_main.c 等），
+# 造成 ① diff 噪音 ② 脚本/工具按行尾匹配时失配 ③ 同步脚本用 SHA256 比对时
+# 会把"只差行尾"误判成"内容有差异"。这里一次性归一化，之后由 git 自动保证。
+
+# 默认：文本文件在仓库里存 LF，检出到工作区也保持 LF
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF（cmd.exe 对 LF-only 的 .bat 在 goto/label 等场景可能解析异常）
+*.bat text eol=crlf
+
+# 二进制资源：git 不要做任何换行/文本转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.bmp  binary
+*.ico  binary
+*.apk  binary
+*.lib  binary
+*.a    binary
+
+# 字体与图片资源是机器生成的，不参与 diff 统计
+assets/*.c linguist-generated=true

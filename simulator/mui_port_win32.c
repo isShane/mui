@@ -21,8 +21,8 @@ uint16_t *win32_get_fb(int *w, int *h)
 
 void mui_port_init(void)
 {
-    win32_w = mui_get_width();
-    win32_h = mui_get_height();
+    win32_w = mui_screen_get_width();
+    win32_h = mui_screen_get_height();
     free(win32_fb);
     win32_fb = (uint16_t *)malloc((size_t)win32_w * win32_h * sizeof(uint16_t));
     if (win32_fb != NULL) {

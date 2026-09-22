@@ -20,8 +20,8 @@ CMakeFiles/
 cmake_install.cmake
 
 # -------- 测试输出 --------
-test_output.png
-test_output.ppm
+test_output*.png
+test_output*.ppm
 
 # -------- Python --------
 __pycache__/

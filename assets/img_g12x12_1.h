@@ -8,6 +8,6 @@
 
 #include "mui.h"
 
-extern const mui_image_alpha_t g12x12_1;
+extern const mui_image_mask_t g12x12_1;
 
 #endif /* IMG_G12X12_1_H */

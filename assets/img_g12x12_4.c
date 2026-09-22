@@ -23,7 +23,7 @@ static const uint8_t g12x12_4_data[] = {
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 };
 
-const mui_image_alpha_t g12x12_4 = {
+const mui_image_mask_t g12x12_4 = {
     .w = 12,
     .h = 12,
     .data = g12x12_4_data,

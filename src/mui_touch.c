@@ -90,8 +90,8 @@ void mui_touch_get_xy(int16_t *x, int16_t *y)
     }
 }
 
-uint8_t mui_hit(int16_t px, int16_t py,
-                int16_t x, int16_t y, int16_t w, int16_t h)
+uint8_t mui_rect_contains(int16_t x, int16_t y, int16_t w, int16_t h,
+                         int16_t px, int16_t py)
 {
     if (w <= 0 || h <= 0) {
         return 0;

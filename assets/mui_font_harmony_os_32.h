@@ -8,6 +8,6 @@
 
 #include "mui_font.h"
 
-extern const mui_lv_font_t harmony_os_32;
+extern const mui_font_t harmony_os_32;
 
 #endif /* MUI_FONT_HARMONY_OS_32_H */

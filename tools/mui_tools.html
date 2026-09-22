@@ -68,9 +68,9 @@
       <div class="col">
         <div class="drop" id="imgDrop">
           拖拽图片到此处，或点击选择
-          <small>支持 PNG / JPG / BMP / GIF / WebP</small>
+          <small>支持 PNG / JPG / BMP / GIF / WebP，可多选批量转换</small>
         </div>
-        <input type="file" id="imgFile" accept="image/*" hidden>
+        <input type="file" id="imgFile" accept="image/*" multiple hidden>
 
         <fieldset>
           <legend>转换选项</legend>
@@ -106,7 +106,7 @@
           模式说明：<br>
           · <b>alpha 蒙版</b>：有透明通道用通道，否则亮度当透明度（黑底白线）。边缘 256 级平滑，颜色由 <code>style->fg</code> 渲染时决定<br>
           · <b>反相</b>：白底深色图案用，白=透明<br>
-          · <b>品红键</b>：透明像素烙成 0xF81F，配 <code>mui_draw_bitmap_key</code>，边缘硬<br>
+          · <b>品红键</b>：透明像素烙成 0xF81F，配 <code>mui_image_draw_key</code>，边缘硬<br>
           生成后把两个文件放进项目 <code>assets\</code>，代码里 <code>#include "img_名字.h"</code>
         </div>
       </div>
@@ -141,7 +141,7 @@
         <div class="hint">
           流程：LVGL 字体工具（lvgl.fluentui.co）选字体导出 .c → 拖入本页 → 生成
           <code>mui_font_名字.c/.h</code> 放入 <code>assets\</code><br>
-          代码用法：<code>mui_lv_font_draw_text(x, y, "123", &amp;hm24, 前景, 背景, 放大倍数);</code><br>
+          代码用法：<code>mui_text_draw(x, y, "123", &amp;hm24, 前景, 背景, 放大倍数);</code><br>
           <span class="warn">注意：当前渲染器仅支持 8bpp 导出（字体工具里 bpp 选 8）</span>
         </div>
       </div>
@@ -171,28 +171,28 @@ function downloadText(filename, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-/** 优先用文件夹选择器直接写入（Chrome/Edge），失败回退下载 */
-async function saveOrDownload(cName, cText, hName, hText, msgEl) {
+/** 优先用文件夹选择器直接写入（Chrome/Edge），失败回退下载；pairs = [[文件名, 文本], ...] */
+async function saveOrDownload(pairs, msgEl) {
   if (window.showDirectoryPicker) {
     try {
       const dir = await window.showDirectoryPicker({mode: 'readwrite'});
-      for (const [name, text] of [[cName, cText], [hName, hText]]) {
+      for (const [name, text] of pairs) {
         const fh = await dir.getFileHandle(name, {create: true});
         const w = await fh.createWritable();
         await w.write(new Blob([text], {type: 'text/plain;charset=utf-8'}));
         await w.close();
       }
-      msgEl.innerHTML = '<div class="ok">已写入 ' + dir.name + '\\：' + cName + ' / ' + hName + '</div>';
+      msgEl.innerHTML = '<div class="ok">已写入 ' + dir.name + '\\：' +
+                        pairs.map(p => p[0]).join(' / ') + '</div>';
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;  /* 用户取消 */
       /* 落入下载回退 */
     }
   }
-  downloadText(cName, cText);
-  downloadText(hName, hText);
-  msgEl.innerHTML = '<div class="ok">已触发下载：' + cName + ' / ' + hName +
-                    '（请自行放入 assets\\ 目录）</div>';
+  pairs.forEach(p => downloadText(p[0], p[1]));
+  msgEl.innerHTML = '<div class="ok">已触发下载 ' + pairs.length +
+                    ' 个文件（请自行放入 assets\\ 目录）</div>';
 }
 
 /** 变量名合法化：只留字母数字下划线，数字开头加 g 前缀（C 标识符规则） */
@@ -205,7 +205,7 @@ function sanitizeName(s, fallback) {
 
 /* ============================ 图片转换 ============================ */
 
-const imgState = { img: null, fileName: '' };
+const imgState = { img: null, fileName: '', batch: null, results: null };
 
 const imgDrop = document.getElementById('imgDrop');
 const imgFile = document.getElementById('imgFile');
@@ -215,23 +215,23 @@ imgDrop.onclick = () => imgFile.click();
   imgDrop.addEventListener(ev, e => {
     e.preventDefault();
     imgDrop.classList.toggle('over', ev === 'dragover');
-    if (ev === 'drop' && e.dataTransfer.files[0]) loadImageFile(e.dataTransfer.files[0]);
+    if (ev === 'drop' && e.dataTransfer.files.length) loadImageFiles(e.dataTransfer.files);
   });
 });
-imgFile.onchange = () => { if (imgFile.files[0]) loadImageFile(imgFile.files[0]); };
+imgFile.onchange = () => { if (imgFile.files.length) loadImageFiles(imgFile.files); };
 
 document.getElementById('imgName').addEventListener('input', refreshImgPreview);
 
-/* 宽高联动（锁定比例） */
+/* 宽高联动（锁定比例；批量模式禁用联动，只统计） */
 document.getElementById('imgW').addEventListener('input', () => {
-  if (!imgState.img || !document.getElementById('imgLock').checked) return;
+  if (!imgState.img || !document.getElementById('imgLock').checked || imgState.batch) return;
   const w = parseInt(document.getElementById('imgW').value, 10);
   if (w > 0) document.getElementById('imgH').value =
     Math.max(1, Math.round(imgState.img.naturalHeight * w / imgState.img.naturalWidth));
   refreshImgPreview();
 });
 document.getElementById('imgH').addEventListener('input', () => {
-  if (!imgState.img || !document.getElementById('imgLock').checked) return;
+  if (!imgState.img || !document.getElementById('imgLock').checked || imgState.batch) return;
   const h = parseInt(document.getElementById('imgH').value, 10);
   if (h > 0) document.getElementById('imgW').value =
     Math.max(1, Math.round(imgState.img.naturalWidth * h / imgState.img.naturalHeight));
@@ -239,25 +239,60 @@ document.getElementById('imgH').addEventListener('input', () => {
 });
 document.getElementById('imgMode').addEventListener('change', refreshImgPreview);
 
-function loadImageFile(file) {
-  if (!file.type.startsWith('image/')) {
+/** 加载一个或多个图片文件（多张 = 批量模式） */
+function loadImageFiles(files) {
+  const list = Array.from(files).filter(f => f.type.startsWith('image/'));
+  if (!list.length) {
     document.getElementById('imgMsg').innerHTML = '<div class="err">不是图片文件</div>';
     return;
   }
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    imgState.img = img;
-    imgState.fileName = file.name;
-    document.getElementById('imgName').value = sanitizeName(file.name, 'image');
+  let loaded = 0;
+  const batch = [];
+  list.forEach(file => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      batch.push({img, fileName: file.name});
+      if (++loaded === list.length) applyLoaded(batch);
+    };
+    img.onerror = () => {
+      if (++loaded === list.length) applyLoaded(batch);
+    };
+    img.src = url;
+  });
+}
+
+/** 加载完成：单张走原有流程，多张进入批量模式 */
+function applyLoaded(batch) {
+  if (!batch.length) {
+    document.getElementById('imgMsg').innerHTML = '<div class="err">图片读取失败</div>';
+    return;
+  }
+  batch.sort((a, b) => a.fileName.localeCompare(b.fileName));
+  document.getElementById('imgMsg').innerHTML = '';
+  imgState.results = null;
+  document.getElementById('imgSave').disabled = true;
+  document.getElementById('imgDl').disabled = true;
+  if (batch.length === 1) {
+    imgState.batch = null;
+    const item = batch[0];
+    imgState.img = item.img;
+    imgState.fileName = item.fileName;
+    document.getElementById('imgName').value = sanitizeName(item.fileName, 'image');
     document.getElementById('imgW').value = '';
     document.getElementById('imgH').value = '';
-    imgDrop.innerHTML = '<b>' + file.name + '</b>（' + img.naturalWidth + 'x' + img.naturalHeight +
-                        '）<small>点击可重新选择</small>';
-    refreshImgPreview();
-  };
-  img.onerror = () => document.getElementById('imgMsg').innerHTML = '<div class="err">图片读取失败</div>';
-  img.src = url;
+    imgDrop.innerHTML = '<b>' + item.fileName + '</b>（' + item.img.naturalWidth + 'x' +
+                        item.img.naturalHeight + '）<small>点击可重新选择</small>';
+  } else {
+    imgState.batch = batch;
+    imgState.img = batch[0].img;   /* 预览第一张 */
+    imgState.fileName = batch[0].fileName;
+    document.getElementById('imgW').value = '';
+    document.getElementById('imgH').value = '';
+    imgDrop.innerHTML = '<b>批量模式：' + batch.length + ' 张图片</b><small>' +
+                        batch.map(b => b.fileName).join('、') + '<br>点击可重新选择</small>';
+  }
+  refreshImgPreview();
 }
 
 /** 当前目标尺寸（null = 原尺寸） */
@@ -268,11 +303,20 @@ function targetSize() {
   return null;
 }
 
-/** 取处理后的 ImageData（含缩放） */
-function processedData() {
-  const img = imgState.img;
+/** 批量模式目标尺寸：宽高都填 = 强制；只填其一 = 每张按比例缩放；都不填 = 原尺寸 */
+function batchTargetSize(img) {
+  const w = parseInt(document.getElementById('imgW').value, 10);
+  const h = parseInt(document.getElementById('imgH').value, 10);
+  if (w > 0 && h > 0) return [w, h];
+  if (w > 0) return [w, Math.max(1, Math.round(img.naturalHeight * w / img.naturalWidth))];
+  if (h > 0) return [Math.max(1, Math.round(img.naturalWidth * h / img.naturalHeight)), h];
+  return null;
+}
+
+/** 取处理后的 ImageData（含缩放；forcedSize 供批量模式传入每张各自的尺寸） */
+function processedData(img, forcedSize) {
   let w = img.naturalWidth, h = img.naturalHeight;
-  const ts = targetSize();
+  const ts = forcedSize || targetSize();
   if (ts) [w, h] = ts;
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;
@@ -288,7 +332,7 @@ function refreshImgPreview() {
   const msg = document.getElementById('imgMsg');
   msg.innerHTML = '';
   if (!imgState.img) return;
-  const [d, w, h] = processedData();
+  const [d, w, h] = processedData(imgState.img);
   const mode = document.getElementById('imgMode').value;
   const bytes = (mode === 'rgb' || mode === 'key') ? w * h * 2 : w * h;
 
@@ -312,46 +356,87 @@ function refreshImgPreview() {
   }
   pc.putImageData(out, 0, 0);
 
+  document.getElementById('imgGen').disabled = false;
+
+  /* 批量模式：统计所有图片 */
+  if (imgState.batch) {
+    let rows = '', total = 0;
+    imgState.batch.forEach(b => {
+      const ts = batchTargetSize(b.img);
+      const bw = ts ? ts[0] : b.img.naturalWidth, bh = ts ? ts[1] : b.img.naturalHeight;
+      const bts = (mode === 'rgb' || mode === 'key') ? bw * bh * 2 : bw * bh;
+      total += bts;
+      rows += b.fileName + '（' + bw + 'x' + bh + '，' + bts + ' 字节）<br>';
+    });
+    document.getElementById('imgStat').innerHTML =
+      '<b>批量模式：' + imgState.batch.length + ' 张</b>（变量名自动取文件名）<br>' + rows +
+      '合计 Flash：<b>' + total + ' 字节</b>（' + (total / 1024).toFixed(1) + ' KB）';
+    return;
+  }
+
   document.getElementById('imgStat').innerHTML =
     '源图：<b>' + imgState.fileName + '</b>（' + imgState.img.naturalWidth + 'x' +
     imgState.img.naturalHeight + '）<br>' +
     '输出：<b>' + w + 'x' + h + '</b>' +
     (hasAlphaCh ? '，检测到透明通道（蒙版将直接采用 alpha 通道）' : '') + '<br>' +
     'Flash 占用：<b>' + bytes + ' 字节</b>（' + (bytes / 1024).toFixed(1) + ' KB）';
-  document.getElementById('imgGen').disabled = false;
 }
 
 document.getElementById('imgGen').onclick = () => {
-  const varName = sanitizeName(document.getElementById('imgName').value, 'image');
-  if (varName !== document.getElementById('imgName').value)
-    document.getElementById('imgName').value = varName;
+  const msg = document.getElementById('imgMsg');
   try {
-    const [cText, hText] = buildImgAsset(varName);
-    imgState.cText = cText; imgState.hText = hText; imgState.varName = varName;
+    if (imgState.batch) {
+      /* 批量：变量名取文件名，重名自动加序号 */
+      const used = {};
+      imgState.results = imgState.batch.map(b => {
+        let varName = sanitizeName(b.fileName, 'image');
+        if (used[varName]) {
+          let i = 2;
+          while (used[varName + '_' + i]) i++;
+          varName += '_' + i;
+        }
+        used[varName] = true;
+        const [cText, hText] = buildImgAsset(varName, b.img, batchTargetSize(b.img));
+        return {varName, cText, hText};
+      });
+      imgState.varName = null;
+      msg.innerHTML = '<div class="ok">批量生成成功：' + imgState.results.length +
+                      ' 张图（' + imgState.results.length * 2 + ' 个文件），点击右侧按钮保存</div>';
+    } else {
+      const varName = sanitizeName(document.getElementById('imgName').value, 'image');
+      if (varName !== document.getElementById('imgName').value)
+        document.getElementById('imgName').value = varName;
+      const [cText, hText] = buildImgAsset(varName, imgState.img, null);
+      imgState.cText = cText; imgState.hText = hText; imgState.varName = varName;
+      msg.innerHTML =
+        '<div class="ok">生成成功：img_' + varName + '.c / img_' + varName + '.h，点击右侧按钮保存</div>';
+    }
     document.getElementById('imgSave').disabled = false;
     document.getElementById('imgDl').disabled = false;
-    document.getElementById('imgMsg').innerHTML =
-      '<div class="ok">生成成功：img_' + varName + '.c / img_' + varName + '.h，点击右侧按钮保存</div>';
   } catch (e) {
-    document.getElementById('imgMsg').innerHTML = '<div class="err">生成失败：' + e.message + '</div>';
+    msg.innerHTML = '<div class="err">生成失败：' + e.message + '</div>';
   }
 };
 
+/** 当前结果转 [[文件名, 文本], ...] */
+function imgResultPairs() {
+  if (imgState.batch)
+    return imgState.results.flatMap(r =>
+      [['img_' + r.varName + '.c', r.cText], ['img_' + r.varName + '.h', r.hText]]);
+  return [['img_' + imgState.varName + '.c', imgState.cText],
+          ['img_' + imgState.varName + '.h', imgState.hText]];
+}
+
 document.getElementById('imgSave').onclick = () =>
-  saveOrDownload('img_' + imgState.varName + '.c', imgState.cText,
-                 'img_' + imgState.varName + '.h', imgState.hText,
-                 document.getElementById('imgMsg'));
+  saveOrDownload(imgResultPairs(), document.getElementById('imgMsg'));
 
 document.getElementById('imgDl').onclick = () => {
-  downloadText('img_' + imgState.varName + '.c', imgState.cText);
-  downloadText('img_' + imgState.varName + '.h', imgState.hText);
-  document.getElementById('imgMsg').innerHTML =
-    '<div class="ok">已触发下载两个文件，请放入 assets\\ 目录</div>';
+  saveOrDownload(imgResultPairs(), document.getElementById('imgMsg'));
 };
 
-/** 生成 C/H 文本（与 tools/img_conv.py 输出格式一致） */
-function buildImgAsset(varName) {
-  const [d, w, h] = processedData();
+/** 生成 C/H 文本（与 tools/img_conv.py 输出格式一致；forcedSize 供批量传入每张各自尺寸） */
+function buildImgAsset(varName, img, forcedSize) {
+  const [d, w, h] = processedData(img, forcedSize);
   const mode = document.getElementById('imgMode').value;
   const isAlpha = (mode === 'alpha' || mode === 'alpha_inv');
   let hasAlphaCh = false;
@@ -402,7 +487,7 @@ function buildImgAsset(varName) {
       '/* -------- 蒙版数据（' + bytes + ' 字节） -------- */\n' +
       'static const uint8_t ' + varName + '_data[] = {\n' +
       dataLines.join('\n') + '\n};\n\n' +
-      'const mui_image_alpha_t ' + varName + ' = {\n' +
+      'const mui_image_mask_t ' + varName + ' = {\n' +
       '    .w = ' + w + ',\n    .h = ' + h + ',\n    .data = ' + varName + '_data,\n};\n';
   } else {
     cText = '/**\n * @file img_' + varName + '.c\n' +
@@ -420,7 +505,7 @@ function buildImgAsset(varName) {
   const hText = '/**\n * @file img_' + varName + '.h\n' +
     ' * @brief ' + (isAlpha ? '蒙版' : '位图') + '资源 ' + varName + ' 声明（由 tools/mui_tools.html 生成）\n */\n\n' +
     '#ifndef IMG_' + up + '_H\n#define IMG_' + up + '_H\n\n#include "mui.h"\n\n' +
-    'extern const ' + (isAlpha ? 'mui_image_alpha_t' : 'mui_image_t') + ' ' + varName + ';\n\n' +
+    'extern const ' + (isAlpha ? 'mui_image_mask_t' : 'mui_image_t') + ' ' + varName + ';\n\n' +
     '#endif /* IMG_' + up + '_H */\n';
   return [cText, hText];
 }
@@ -557,15 +642,14 @@ document.getElementById('fontGen').onclick = () => {
 };
 
 document.getElementById('fontSave').onclick = () =>
-  saveOrDownload('mui_font_' + fontState.name + '.c', fontState.cText,
-                 'mui_font_' + fontState.name + '.h', fontState.hText,
+  saveOrDownload([['mui_font_' + fontState.name + '.c', fontState.cText],
+                 ['mui_font_' + fontState.name + '.h', fontState.hText]],
                  document.getElementById('fontMsg'));
 
 document.getElementById('fontDl').onclick = () => {
-  downloadText('mui_font_' + fontState.name + '.c', fontState.cText);
-  downloadText('mui_font_' + fontState.name + '.h', fontState.hText);
-  document.getElementById('fontMsg').innerHTML =
-    '<div class="ok">已触发下载两个文件，请放入 assets\\ 目录</div>';
+  saveOrDownload([['mui_font_' + fontState.name + '.c', fontState.cText],
+                 ['mui_font_' + fontState.name + '.h', fontState.hText]],
+                 document.getElementById('fontMsg'));
 };
 
 /** 生成 C/H 文本（与 tools/lvgl_font_conv.py 输出格式一致） */
@@ -609,9 +693,9 @@ function buildFontAsset(name) {
     'static const mui_glyph_dsc_t ' + name + '_glyphs[] = {\n' +
     glyphs.map(g => '    {' + g.join(', ') + '},').join('\n') + '\n};\n\n' +
     '/* -------- 字符映射段 -------- */\n' +
-    'static const mui_lv_font_cmap_t ' + name + '_cmaps[] = {\n' +
+    'static const mui_font_cmap_t ' + name + '_cmaps[] = {\n' +
     cmapRows.join('\n') + '\n};\n\n' +
-    'const mui_lv_font_t ' + name + ' = {\n' +
+    'const mui_font_t ' + name + ' = {\n' +
     '    .bitmap = ' + name + '_bitmap,\n' +
     '    .glyphs = ' + name + '_glyphs,\n' +
     '    .cmaps = ' + name + '_cmaps,\n' +
@@ -624,7 +708,7 @@ function buildFontAsset(name) {
   const hText = '/**\n * @file mui_font_' + name + '.h\n' +
     ' * @brief LVGL 转换字体 ' + name + ' 声明（由 tools/mui_tools.html 生成）\n */\n\n' +
     '#ifndef MUI_FONT_' + up + '_H\n#define MUI_FONT_' + up + '_H\n\n' +
-    '#include "mui_font.h"\n\nextern const mui_lv_font_t ' + name + ';\n\n' +
+    '#include "mui_font.h"\n\nextern const mui_font_t ' + name + ';\n\n' +
     '#endif /* MUI_FONT_' + up + '_H */\n';
   return [cText, hText];
 }

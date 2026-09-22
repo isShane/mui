@@ -1,6 +1,6 @@
 /**
  * @file mui_font.c
- * @brief MUI 点阵字体实现（5x7，行式字模，bit4..bit0 = 列0..列4）
+ * @brief MUI 字体渲染实现（LVGL 转换字体，8bpp 灰度 alpha 混合）
  */
 
 #include "mui.h"
@@ -12,7 +12,7 @@
  * @brief 在字体中查找字符 c 的字形描述
  * @return 字形指针；字符不存在返回 NULL
  */
-static const mui_glyph_dsc_t *mui_lv_font_find_glyph(const mui_lv_font_t *f, char c)
+static const mui_glyph_dsc_t *mui_font_find_glyph(const mui_font_t *f, char c)
 {
     uint16_t cp = (uint16_t)(unsigned char)c;
 
@@ -29,14 +29,14 @@ static const mui_glyph_dsc_t *mui_lv_font_find_glyph(const mui_lv_font_t *f, cha
     return NULL;
 }
 
-void mui_lv_font_draw_char(int16_t x, int16_t y, char c, const mui_lv_font_t *f,
+void mui_text_draw_char(int16_t x, int16_t y, char c, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale)
 {
     const mui_glyph_dsc_t *g;
     int16_t gx, gy;
     int row, col;
 
-    g = mui_lv_font_find_glyph(f, c);
+    g = mui_font_find_glyph(f, c);
     if (g == NULL) {
         return;
     }
@@ -53,20 +53,20 @@ void mui_lv_font_draw_char(int16_t x, int16_t y, char c, const mui_lv_font_t *f,
                 continue;
             }
             color = (alpha >= 250) ? fg : mui_color_mix(fg, bg, alpha);
-            mui_fill_rect((int16_t)(gx + col * scale),
+            mui_rect_fill((int16_t)(gx + col * scale),
                           (int16_t)(gy + row * scale),
                           scale, scale, color);
         }
     }
 }
 
-void mui_lv_font_draw_text(int16_t x, int16_t y, const char *s, const mui_lv_font_t *f,
+void mui_text_draw(int16_t x, int16_t y, const char *s, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale)
 {
     while (*s) {
-        const mui_glyph_dsc_t *g = mui_lv_font_find_glyph(f, *s);
+        const mui_glyph_dsc_t *g = mui_font_find_glyph(f, *s);
         if (g != NULL) {
-            mui_lv_font_draw_char(x, y, *s, f, fg, bg, scale);
+            mui_text_draw_char(x, y, *s, f, fg, bg, scale);
             /* 步进宽度：adv_w 为 1/16 像素，四舍五入 */
             x = (int16_t)(x + ((g->adv_w + 8) / 16) * scale);
         }
@@ -77,8 +77,8 @@ void mui_lv_font_draw_text(int16_t x, int16_t y, const char *s, const mui_lv_fon
 /** @brief 整格覆盖绘制的行缓冲上限（= 最大步进像素宽，防越界） */
 #define MUI_FONT_CELL_LINE_MAX   72
 
-void mui_lv_font_draw_char_cell(int16_t x, int16_t y, char c,
-                                const mui_lv_font_t *f,
+void mui_text_draw_char_cell(int16_t x, int16_t y, char c,
+                                const mui_font_t *f,
                                 uint16_t fg, uint16_t bg, int16_t scale)
 {
     const mui_glyph_dsc_t *g;
@@ -86,7 +86,7 @@ void mui_lv_font_draw_char_cell(int16_t x, int16_t y, char c,
     int16_t step, gy_rel, gr;
     int row, col, i, px;
 
-    g = mui_lv_font_find_glyph(f, c);
+    g = mui_font_find_glyph(f, c);
     if (g == NULL || scale < 1) {
         return;
     }
@@ -123,109 +123,33 @@ void mui_lv_font_draw_char_cell(int16_t x, int16_t y, char c,
             }
         }
         /* 整行（含放大倍数行）一次开窗连续写 */
-        mui_draw_bitmap(x, (int16_t)(y + row), step, 1, line);
+        mui_image_draw(x, (int16_t)(y + row), step, 1, line);
     }
 }
 
-void mui_lv_font_draw_text_cell(int16_t x, int16_t y, const char *s,
-                                const mui_lv_font_t *f,
+void mui_text_draw_cell(int16_t x, int16_t y, const char *s,
+                                const mui_font_t *f,
                                 uint16_t fg, uint16_t bg, int16_t scale)
 {
     while (*s) {
-        const mui_glyph_dsc_t *g = mui_lv_font_find_glyph(f, *s);
+        const mui_glyph_dsc_t *g = mui_font_find_glyph(f, *s);
         if (g != NULL) {
-            mui_lv_font_draw_char_cell(x, y, *s, f, fg, bg, scale);
+            mui_text_draw_char_cell(x, y, *s, f, fg, bg, scale);
             x = (int16_t)(x + ((g->adv_w + 8) / 16) * scale);
         }
         s++;
     }
 }
 
-int16_t mui_lv_font_text_width(const char *s, const mui_lv_font_t *f, int16_t scale)
+int16_t mui_text_width(const char *s, const mui_font_t *f, int16_t scale)
 {
     int16_t w = 0;
     while (*s) {
-        const mui_glyph_dsc_t *g = mui_lv_font_find_glyph(f, *s);
+        const mui_glyph_dsc_t *g = mui_font_find_glyph(f, *s);
         if (g != NULL) {
             w = (int16_t)(w + ((g->adv_w + 8) / 16) * scale);
         }
         s++;
     }
     return w;
-}
-
-/* -------- 5x7 点阵字体 -------- */
-
-/* -------- 5x7 字模表（按需收录，可逐步扩充） -------- */
-static const struct {
-    char ch;
-    uint8_t rows[7];
-} font5x7[] = {
-    {'0', {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}},
-    {'1', {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}},
-    {'2', {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}},
-    {'3', {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E}},
-    {'4', {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}},
-    {'5', {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}},
-    {'6', {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}},
-    {'7', {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}},
-    {'8', {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}},
-    {'9', {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}},
-    {'%', {0x0C,0x0C,0x01,0x02,0x04,0x06,0x06}},
-    {'A', {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}},
-    {'D', {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E}},
-    {'E', {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}},
-    {'H', {0x11,0x11,0x11,0x1F,0x11,0x11,0x11}},
-    {'I', {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E}},
-    {'M', {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}},
-    {'N', {0x11,0x11,0x13,0x15,0x19,0x11,0x11}},
-    {'O', {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}},
-    {'R', {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}},
-    {'d', {0x01,0x01,0x0F,0x11,0x11,0x11,0x0F}},
-    {'e', {0x00,0x00,0x0E,0x11,0x1F,0x10,0x0E}},
-    {'o', {0x00,0x00,0x0E,0x11,0x11,0x11,0x0E}},
-    {'z', {0x00,0x1F,0x02,0x04,0x08,0x1F,0x00}},
-    {':', {0x00,0x04,0x00,0x00,0x00,0x04,0x00}},
-    {' ', {0x00,0x00,0x00,0x00,0x00,0x00,0x00}},
-};
-
-void mui_font_draw_char(int16_t x, int16_t y, char c, uint16_t color, int16_t scale)
-{
-    size_t i;
-    for (i = 0; i < sizeof(font5x7) / sizeof(font5x7[0]); i++) {
-        if (font5x7[i].ch == c) {
-            int row, col;
-            for (row = 0; row < 7; row++) {
-                for (col = 0; col < 5; col++) {
-                    if (font5x7[i].rows[row] & (0x10 >> col)) {
-                        mui_fill_rect((int16_t)(x + col * scale),
-                                      (int16_t)(y + row * scale),
-                                      scale, scale, color);
-                    }
-                }
-            }
-            return;
-        }
-    }
-}
-
-void mui_font_draw_text(int16_t x, int16_t y, const char *s, uint16_t color,
-                        int16_t scale, int16_t spacing)
-{
-    while (*s) {
-        mui_font_draw_char(x, y, *s, color, scale);
-        x = (int16_t)(x + (5 + spacing) * scale);
-        s++;
-    }
-}
-
-int16_t mui_font_text_width(const char *s, int16_t scale, int16_t spacing)
-{
-    int16_t n = 0;
-
-    while (*s) {
-        n++;
-        s++;
-    }
-    return (int16_t)(n == 0 ? 0 : (n * (5 + spacing) - spacing) * scale);
 }

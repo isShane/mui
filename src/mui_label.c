@@ -7,9 +7,6 @@
 #include "mui.h"
 #include "mui_font.h"
 
-/** @brief 5x7 点阵字距（须与绘制时的传参一致） */
-#define LABEL_SPACING 1
-
 /**
  * @brief 覆盖式刷新开关：1 = 等长同宽文本走"整格覆盖"（无擦白阶段，防闪烁）
  * @note  覆盖绘制会在格内写背景色，要求文本下方为纯 bg；
@@ -25,14 +22,13 @@
 static void label_measure(const mui_label_t *lbl, const char *s,
                           int16_t *w, int16_t *h)
 {
-    if (lbl->font != NULL) {
-        const mui_lv_font_t *f = (const mui_lv_font_t *)lbl->font;
-        *w = mui_lv_font_text_width(s, f, lbl->scale);
-        *h = (int16_t)(f->line_height * lbl->scale);
-    } else {
-        *w = mui_font_text_width(s, lbl->scale, LABEL_SPACING);
-        *h = (int16_t)(7 * lbl->scale);
+    if (lbl->font == NULL) {          /* 未配字体：不绘制（不崩） */
+        *w = 0;
+        *h = 0;
+        return;
     }
+    *w = mui_text_width(s, lbl->font, lbl->scale);
+    *h = (int16_t)(lbl->font->line_height * lbl->scale);
 }
 
 /**
@@ -43,12 +39,10 @@ static void label_measure(const mui_label_t *lbl, const char *s,
  */
 static void label_paint_at(const mui_label_t *lbl, int16_t x, const char *s)
 {
-    if (lbl->font != NULL) {
-        mui_lv_font_draw_text(x, lbl->y, s, (const mui_lv_font_t *)lbl->font,
-                              lbl->fg, lbl->bg, lbl->scale);
-    } else {
-        mui_font_draw_text(x, lbl->y, s, lbl->fg, lbl->scale, LABEL_SPACING);
+    if (lbl->font == NULL) {
+        return;
     }
+    mui_text_draw(x, lbl->y, s, lbl->font, lbl->fg, lbl->bg, lbl->scale);
 }
 
 /**
@@ -63,9 +57,7 @@ static void label_paint(const mui_label_t *lbl)
  * @brief 内部：计算前 n 个字符占用的步进宽度
  *
  * 必须与绘制步进严格一致，否则"从中间起画"会错位：
- *  - LVGL 字体：adv_w 累加，与 mui_lv_font_draw_text 一致
- *  - 5x7 点阵：绘制步进恒为 (5+spacing)*scale，不能用 mui_font_text_width
- *    （后者少算末尾一个 spacing，仅用于包围盒测量）
+ *  按 adv_w 累加，与 mui_text_draw 的步进一致。
  * @param lbl 标签对象
  * @param s   字符串
  * @param n   字符数（<= 0 返回 0）
@@ -76,17 +68,14 @@ static int16_t label_prefix_width(const mui_label_t *lbl, const char *s, int16_t
     char tmp[MUI_LABEL_MAX];
     int16_t i;
 
-    if (n <= 0) {
+    if (n <= 0 || lbl->font == NULL) {
         return 0;
-    }
-    if (lbl->font == NULL) {
-        return (int16_t)(n * (5 + LABEL_SPACING) * lbl->scale);
     }
     for (i = 0; i < n && i < MUI_LABEL_MAX - 1 && s[i] != '\0'; i++) {
         tmp[i] = s[i];
     }
     tmp[i] = '\0';
-    return mui_lv_font_text_width(tmp, (const mui_lv_font_t *)lbl->font, lbl->scale);
+    return mui_text_width(tmp, lbl->font, lbl->scale);
 }
 
 /**
@@ -94,13 +83,13 @@ static int16_t label_prefix_width(const mui_label_t *lbl, const char *s, int16_t
  */
 static void label_erase(const mui_label_t *lbl)
 {
-    mui_fill_rect((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
+    mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
                   (int16_t)(lbl->last_w + 4), (int16_t)(lbl->last_h + 4),
                   lbl->bg);
 }
 
 void mui_label_init(mui_label_t *lbl, int16_t x, int16_t y,
-                    const void *font, uint16_t fg, uint16_t bg, int16_t scale)
+                    const mui_font_t *font, uint16_t fg, uint16_t bg, int16_t scale)
 {
     lbl->x = x;
     lbl->y = y;
@@ -187,11 +176,10 @@ void mui_label_set_text(mui_label_t *lbl, const char *text)
 
 #if MUI_LABEL_OPA_COVER
     /* -------- 覆盖式快路径：等长同宽文本整格就地替换（无擦白阶段 → 不闪烁） -------- */
-    if (lbl->font != NULL && old_len == new_len && lbl->last_w == new_w) {
-        mui_lv_font_draw_text_cell((int16_t)(lbl->x + left_x), lbl->y,
-                                   lbl->buf + left,
-                                   (const mui_lv_font_t *)lbl->font,
-                                   lbl->fg, lbl->bg, lbl->scale);
+    if (old_len == new_len && lbl->last_w == new_w) {
+        mui_text_draw_cell((int16_t)(lbl->x + left_x), lbl->y,
+                           lbl->buf + left, lbl->font,
+                           lbl->fg, lbl->bg, lbl->scale);
         lbl->last_w = new_w;
         lbl->last_h = new_h;
         return;
@@ -206,12 +194,12 @@ void mui_label_set_text(mui_label_t *lbl, const char *text)
 
     if (left == 0) {
         /* 从行首开始：保留原有 2 像素外扩，防字形左溢残影 */
-        mui_fill_rect((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
+        mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
                       (int16_t)(erase_w + 4),
                       (int16_t)((lbl->last_h > new_h ? lbl->last_h : new_h) + 4),
                       lbl->bg);
     } else {
-        mui_fill_rect((int16_t)(lbl->x + left_x), (int16_t)(lbl->y - 2),
+        mui_rect_fill((int16_t)(lbl->x + left_x), (int16_t)(lbl->y - 2),
                       erase_w,
                       (int16_t)((lbl->last_h > new_h ? lbl->last_h : new_h) + 4),
                       lbl->bg);

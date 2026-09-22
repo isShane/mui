@@ -30,7 +30,7 @@
 - `mui_port_draw_bitmap`
 
 而"裁剪到屏幕"的逻辑目前在 [mui_gfx.c](../src/mui_gfx.c) 中重复了四份：
-`mui_fill_rect`、`mui_draw_bitmap`、`mui_draw_bitmap_key`、`mui_draw_bitmap_alpha`。
+`mui_rect_fill`、`mui_image_draw`、`mui_image_draw_key`、`mui_image_draw_mask`。
 
 因此裁剪区与脏矩形可以统一挂载在这一个位置，且改造后重复代码是净减少的。
 `mui_port.h` 的契约（收到的坐标必为合法屏幕内坐标）保持不变。
@@ -90,7 +90,7 @@ mui_clip_restore(old);
 - 裁剪区本身永远保证落在屏幕内（`mui_set_clip` 内完成求交）
 - 内部求交顺序固定为「裁剪区 ∩ 矩形」，因裁剪区已在屏幕内，结果必然在屏幕内
 - 空裁剪区（`x2 == x` 或 `y2 == y`）表示"全部丢弃"，可用于临时隐藏
-- `mui_clear_screen()` 也受裁剪区限制（清屏 = 填充裁剪区），需要真清全屏时先 `mui_reset_clip()`
+- `mui_screen_clear()` 也受裁剪区限制（清屏 = 填充裁剪区），需要真清全屏时先 `mui_reset_clip()`
 
 ### 3.3 内部实现
 
@@ -125,10 +125,10 @@ static uint8_t mui__clip_rect(int16_t *x, int16_t *y, int16_t *w, int16_t *h)
 }
 ```
 
-`mui_draw_pixel` 直接做四次比较，不调用上述函数（逐像素路径，避免函数调用开销）：
+`mui_pixel_draw` 直接做四次比较，不调用上述函数（逐像素路径，避免函数调用开销）：
 
 ```c
-void mui_draw_pixel(int16_t x, int16_t y, uint16_t color)
+void mui_pixel_draw(int16_t x, int16_t y, uint16_t color)
 {
     if (x < s_clip.x || y < s_clip.y || x >= s_clip.x2 || y >= s_clip.y2) {
         return;
@@ -142,13 +142,13 @@ void mui_draw_pixel(int16_t x, int16_t y, uint16_t color)
 
 | 函数 | 改造内容 |
 |---|---|
-| `mui_fill_rect` | 原裁剪逻辑替换为 `mui__clip_rect`，注意同步改 `hline/vline`（它们走 fill_rect，无需单独改） |
-| `mui_draw_bitmap` | 裁剪前先保存原始行宽 `stride = w`，源偏移用 `stride` 计算（**不能**用裁剪后的 `w`） |
-| `mui_draw_bitmap_key` | 同上保存 `stride`；逐行 `line = data + (row - oy) * stride + (x - ox)` |
-| `mui_draw_bitmap_alpha` | 保存 `stride` 修正现有缺陷（见第 6 节）；裁剪后整块记脏，内部循环改用 `mui_port_draw_pixel` |
-| `mui_draw_line` / 圆 / 椭圆 / 三角 | 无需改动，最终都落到 `draw_pixel` 或 `hline`，自动生效 |
-| `mui_draw_line_aa` / `mui_draw_circle_aa` | 无需改动，同上 |
-| `mui_fill_triangle` | 内部有 `y_start/y_end` 的屏幕裁剪，可简化为交给 `mui_draw_hline` 处理 |
+| `mui_rect_fill` | 原裁剪逻辑替换为 `mui__clip_rect`，注意同步改 `hline/vline`（它们走 fill_rect，无需单独改） |
+| `mui_image_draw` | 裁剪前先保存原始行宽 `stride = w`，源偏移用 `stride` 计算（**不能**用裁剪后的 `w`） |
+| `mui_image_draw_key` | 同上保存 `stride`；逐行 `line = data + (row - oy) * stride + (x - ox)` |
+| `mui_image_draw_mask` | 保存 `stride` 修正现有缺陷（见第 6 节）；裁剪后整块记脏，内部循环改用 `mui_port_draw_pixel` |
+| `mui_line_draw` / 圆 / 椭圆 / 三角 | 无需改动，最终都落到 `draw_pixel` 或 `hline`，自动生效 |
+| `mui_line_draw_aa` / `mui_circle_draw_aa` | 无需改动，同上 |
+| `mui_triangle_fill` | 内部有 `y_start/y_end` 的屏幕裁剪，可简化为交给 `mui_hline_draw` 处理 |
 
 ## 4. P2 脏矩形跟踪
 
@@ -240,7 +240,7 @@ uint8_t  c_visible;     /**< 上次绘制时的可见状态 */
 int16_t  c_x;           /**< 上次绘制时的横坐标 */
 int16_t  c_y;           /**< 上次绘制时的纵坐标 */
 const char *c_text;     /**< 上次绘制时的文字指针 */
-const mui_image_alpha_t *c_icon;  /**< 上次绘制时的图标指针 */
+const mui_image_mask_t *c_icon;  /**< 上次绘制时的图标指针 */
 const void *c_font;     /**< 上次绘制时的字体指针 */
 ```
 
@@ -267,12 +267,12 @@ void mui_button_invalidate(mui_button_t *btn);
 `demo_ui_frame()` 里每帧无条件的 `mui_button_draw()` 调用保持不变——
 开销已经由 `draw()` 内部的缓存比对拦掉，界面代码不需要写脏区逻辑。
 
-需要变化的只有一处：整屏 `mui_clear_screen()` 之后，所有按钮要 `invalidate`，
+需要变化的只有一处：整屏 `mui_screen_clear()` 之后，所有按钮要 `invalidate`，
 因为屏幕内容已被外部破坏。
 
 ## 6. 顺带修复：alpha 位图裁剪缺陷
 
-[mui_draw_bitmap_alpha](../src/mui_gfx.c) 当前用裁剪后的宽度反推行宽：
+[mui_image_draw_mask](../src/mui_gfx.c) 当前用裁剪后的宽度反推行宽：
 
 ```c
 const uint8_t *line = data + (int32_t)(sy + row) * (sx + w) + sx;
@@ -281,7 +281,7 @@ const uint8_t *line = data + (int32_t)(sy + row) * (sx + w) + sx;
 `sx + w` 只在"仅左侧越界"时才等于原始行宽。当图宽大于屏宽（左右都越界）时行宽算错，
 例如原宽 100、`x = -10`、屏宽 50：`sx + w = 10 + 50 = 60`，正确行宽是 100 → 整行数据错位。
 
-P1 改造时改为裁剪前保存 `stride = w`，与 `mui_draw_bitmap` / `mui_draw_bitmap_key` 保持一致。
+P1 改造时改为裁剪前保存 `stride = w`，与 `mui_image_draw` / `mui_image_draw_key` 保持一致。
 
 ## 7. 明确不做的事
 

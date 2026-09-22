@@ -1,8 +1,9 @@
 /**
  * @file mui_font.h
- * @brief MUI 点阵字体（5x7，模拟器与单片机共用）
+ * @brief MUI 字体渲染（LVGL 转换字体，8bpp 灰度抗锯齿）
  *
- * 只依赖 mui.h 的图形 API，可在任意平台直接编译。
+ * 字体资源由 tools/lvgl_font_conv.py 从 LVGL 导出的 .c 转换生成；
+ * 本文件只依赖图形 API 的调用方，平台无关。
  */
 
 #ifndef MUI_FONT_H
@@ -27,19 +28,19 @@ typedef struct {
     uint16_t first_char;    /**< 本段起始字符 ASCII/Unicode */
     uint16_t last_char;     /**< 本段结束字符（含，长度=last-first+1） */
     uint16_t glyph_id;      /**< 本段第一个字符在 glyphs[] 中的下标 */
-} mui_lv_font_cmap_t;
+} mui_font_cmap_t;
 
 /** @brief LVGL 转换字体描述 */
 typedef struct {
     const uint8_t *bitmap;        /**< 8bpp 灰度位图数据 */
     const mui_glyph_dsc_t *glyphs;/**< 字形描述数组（按段顺序、段内连续排列） */
-    const mui_lv_font_cmap_t *cmaps; /**< 字符映射段表；NULL 时退化为单段(first_char~last_char) */
+    const mui_font_cmap_t *cmaps; /**< 字符映射段表；NULL 时退化为单段(first_char~last_char) */
     uint16_t cmap_count;          /**< cmaps 段数（0=单段，用 first_char/last_char） */
     uint8_t first_char;           /**< 单段模式首字符 ASCII（cmap_count=0 时使用） */
     uint8_t last_char;            /**< 单段模式末字符 ASCII（cmap_count=0 时使用） */
     uint8_t line_height;          /**< 行高（像素） */
     int8_t base_line;             /**< 基线（从行底向上） */
-} mui_lv_font_t;
+} mui_font_t;
 
 /**
  * @brief 绘制单个 LVGL 字体字符（8bpp alpha 混合，需纯色背景）
@@ -51,7 +52,7 @@ typedef struct {
  * @param bg     背景色（alpha 混合用）
  * @param scale  整数放大倍数
  */
-void mui_lv_font_draw_char(int16_t x, int16_t y, char c, const mui_lv_font_t *f,
+void mui_text_draw_char(int16_t x, int16_t y, char c, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale);
 
 /**
@@ -64,7 +65,7 @@ void mui_lv_font_draw_char(int16_t x, int16_t y, char c, const mui_lv_font_t *f,
  * @param bg     背景色
  * @param scale  整数放大倍数
  */
-void mui_lv_font_draw_text(int16_t x, int16_t y, const char *s, const mui_lv_font_t *f,
+void mui_text_draw(int16_t x, int16_t y, const char *s, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale);
 
 /**
@@ -84,16 +85,16 @@ void mui_lv_font_draw_text(int16_t x, int16_t y, const char *s, const mui_lv_fon
  * @param bg     背景色（格内非字形像素写它）
  * @param scale  整数放大倍数
  */
-void mui_lv_font_draw_char_cell(int16_t x, int16_t y, char c,
-                                const mui_lv_font_t *f,
+void mui_text_draw_char_cell(int16_t x, int16_t y, char c,
+                                const mui_font_t *f,
                                 uint16_t fg, uint16_t bg, int16_t scale);
 
 /**
  * @brief 绘制字符串"整格覆盖"版（逐字符调用 draw_char_cell，步进与 draw_text 一致）
- * @note  与 mui_lv_font_draw_text 参数含义相同，差别仅在"就地覆盖、无擦白"
+ * @note  与 mui_text_draw 参数含义相同，差别仅在"就地覆盖、无擦白"
  */
-void mui_lv_font_draw_text_cell(int16_t x, int16_t y, const char *s,
-                                const mui_lv_font_t *f,
+void mui_text_draw_cell(int16_t x, int16_t y, const char *s,
+                                const mui_font_t *f,
                                 uint16_t fg, uint16_t bg, int16_t scale);
 
 /**
@@ -103,39 +104,6 @@ void mui_lv_font_draw_text_cell(int16_t x, int16_t y, const char *s,
  * @param scale  整数放大倍数
  * @return       宽度（像素）
  */
-int16_t mui_lv_font_text_width(const char *s, const mui_lv_font_t *f, int16_t scale);
-
-/* -------- 5x7 点阵字体 -------- */
-
-/**
- * @brief 绘制单个 5x7 点阵字符
- * @param x      左上角 x 坐标
- * @param y      左上角 y 坐标
- * @param c      字符（未收录的字符跳过不画）
- * @param color  前景色
- * @param scale  整数放大倍数（1 = 5x7 原始大小）
- */
-void mui_font_draw_char(int16_t x, int16_t y, char c, uint16_t color, int16_t scale);
-
-/**
- * @brief 绘制点阵字符串
- * @param x        左上角 x 坐标
- * @param y        左上角 y 坐标
- * @param s        字符串
- * @param color    前景色
- * @param scale    整数放大倍数
- * @param spacing  字距（像素，scale=1 时的逻辑间距）
- */
-void mui_font_draw_text(int16_t x, int16_t y, const char *s, uint16_t color,
-                        int16_t scale, int16_t spacing);
-
-/**
- * @brief 计算点阵字符串宽度
- * @param s        字符串
- * @param scale    整数放大倍数
- * @param spacing  字距（像素，scale=1 时的逻辑间距）
- * @return         宽度（像素）
- */
-int16_t mui_font_text_width(const char *s, int16_t scale, int16_t spacing);
+int16_t mui_text_width(const char *s, const mui_font_t *f, int16_t scale);
 
 #endif /* MUI_FONT_H */
