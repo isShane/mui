@@ -380,6 +380,25 @@ void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
 void mui_round_rect_fill_aa(int16_t x, int16_t y, int16_t w, int16_t h,
                             int16_t r, uint16_t fg, uint16_t bg);
 
+/**
+ * @brief 抗锯齿空心圆角矩形（1 像素边框，四角圆弧与底色混合过渡）
+ *
+ * 与 mui_round_rect_draw 逐项同构（四条直边 + 四角圆弧、圆心相同），可直接替换：
+ *   - 四条直边是轴对齐 1px，覆盖率恒为 1，不做混合（与硬边版完全一致）；
+ *   - 四角圆弧按"1px 描边带（半径 r±0.5）的覆盖率"拆成内外双像素混色，
+ *     算法与 mui_circle_draw_aa 同一套（Wu），故圆角观感与抗锯齿圆一致。
+ * 轮廓范围与硬边版相同（不会向外多长一圈），只是把台阶换成过渡色。
+ * @param x     左上角横坐标
+ * @param y     左上角纵坐标
+ * @param w     宽度（<1 则不绘制）
+ * @param h     高度（<1 则不绘制）
+ * @param r     圆角半径（自动限制到 w/2 与 h/2，0 为直角 → 退化为 mui_rect_draw）
+ * @param fg    描边 RGB565 颜色
+ * @param bg    背景 RGB565 颜色（仅直绘后端使用；缓冲后端自动回读真实底色）
+ */
+void mui_round_rect_draw_aa(int16_t x, int16_t y, int16_t w, int16_t h,
+                            int16_t r, uint16_t fg, uint16_t bg);
+
 /* -------- 触摸 / 指针输入 -------- */
 
 /** @brief 触摸事件类型 */

@@ -7,6 +7,7 @@
 
 #include "mui.h"
 #include "mui_out.h"    /* 输出层：按 mui_conf.h 选择直绘或缓冲后端 */
+#include "mui_math.h"   /* 库内数学工具（定义在本文件，声明给其它模块用） */
 
 /* -------- 内部状态 -------- */
 
@@ -17,12 +18,13 @@ static int16_t mui_screen_h = 0;  /**< 屏幕高度 */
 
 /**
  * @brief 整数平方根（逐位法：只用移位/比较/减法，无除法、无浮点）
- * @param n 输入值（n <= 0 时返回 0）
+ * @param n 输入值（n == 0 时返回 0）
  * @return 不超过 sqrt(n) 的最大整数
  * @note  早期版本用牛顿迭代（每轮一次 32 位除法），在无硬件除法的 M0 上约 900 周期/次；
- *        逐位法约 100~150 周期，圆/椭圆填充与抗锯齿都能受益，且结果同为 floor(sqrt(n))
+ *        逐位法约 100~150 周期，圆/椭圆填充与抗锯齿都能受益，且结果同为 floor(sqrt(n))。
+ *        非 static：库内其它模块（如控件）也用得到，声明见 mui_math.h。
  */
-static uint32_t mui_isqrt(uint32_t n)
+uint32_t mui_isqrt(uint32_t n)
 {
     uint32_t res = 0;
     uint32_t bit = (uint32_t)1 << 30;
@@ -707,13 +709,28 @@ void mui_line_draw_aa(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
     }
 }
 
-void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
-                        uint16_t fg, uint16_t bg)
+/**
+ * @brief 画一段抗锯齿圆弧（内部；Wu 式 1px 描边带，半径 r±0.5 的覆盖率）
+ *
+ * 逐列求圆上点的精确位置（8.8 定点开方得 y 与小数部分 frac），把 255 的墨量按
+ * (255-frac) / frac 分给"内侧/外侧"两个像素，各象限两两对称展开。
+ * 抗锯齿圆、抗锯齿圆角矩形的四角都用它，保证两者观感一致。
+ * @param cx,cy 圆心
+ * @param r     半径
+ * @param quad  象限掩码：bit0 左上 bit1 右上 bit2 右下 bit3 左下（与硬边版一致）
+ * @param fg    前景色（描边色）
+ * @param bg    背景色（直绘后端用；缓冲后端自动回读真实底色）
+ * @note  与硬边版 `mui_circle_draw_arc` 相比，本函数在第 7/8 个八分圆边界处
+ *        （45° 对角）不会补画"带外"的那个像素——那是 Wu 阶梯的正常特性，
+ *        外观上是平滑斜线，不是断口。
+ */
+static void mui_circle_arc_aa(int16_t cx, int16_t cy, int16_t r, uint8_t quad,
+                              uint16_t fg, uint16_t bg)
 {
     int16_t x;
     int16_t x_max;
 
-    if (r < 0) {
+    if (r < 0 || quad == 0) {
         return;
     }
     if (r == 0) {
@@ -723,37 +740,59 @@ void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
     x_max = (int16_t)mui_isqrt((uint32_t)r * r / 2);  /* 45° 处截止 */
 
     for (x = 0; x <= x_max; x++) {
-        uint32_t v = (uint32_t)r * r - (uint32_t)x * x;
-        uint32_t y_fp = mui_isqrt(v << 16);           /* 8 位小数定点 */
+        uint32_t y_fp = mui_sqrt_fp8((uint32_t)r * r - (uint32_t)x * x);
         int16_t y = (int16_t)(y_fp >> 8);
         uint8_t frac = (uint8_t)(y_fp & 0xFF);
-        uint8_t a_in = (uint8_t)(255 - frac);         /* 内侧像素强度 */
         int16_t y1 = (int16_t)(y + 1);
 
-        /* 圆上每点画"内侧 + 外侧"双像素，八对称展开 */
-        if (a_in != 0) {
-            uint16_t c = mui_color_mix(fg, bg, a_in);
-            mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy - y), c);
-            mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy - y), c);
-            mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy + y), c);
-            mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy + y), c);
-            mui_pixel_draw((int16_t)(cx + y), (int16_t)(cy - x), c);
-            mui_pixel_draw((int16_t)(cx - y), (int16_t)(cy - x), c);
-            mui_pixel_draw((int16_t)(cx + y), (int16_t)(cy + x), c);
-            mui_pixel_draw((int16_t)(cx - y), (int16_t)(cy + x), c);
+        /* 圆上每点画"内侧 + 外侧"双像素，按象限掩码取点 */
+        if (frac != 0xFF) {                     /* 内侧强度 = 255 - frac */
+            uint16_t c = mui_color_mix(fg, bg, (uint8_t)(255 - frac));
+
+            if (quad & 0x01) {                  /* 左上 */
+                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy - y), c);
+                mui_pixel_draw((int16_t)(cx - y), (int16_t)(cy - x), c);
+            }
+            if (quad & 0x02) {                  /* 右上 */
+                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy - y), c);
+                mui_pixel_draw((int16_t)(cx + y), (int16_t)(cy - x), c);
+            }
+            if (quad & 0x04) {                  /* 右下 */
+                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy + y), c);
+                mui_pixel_draw((int16_t)(cx + y), (int16_t)(cy + x), c);
+            }
+            if (quad & 0x08) {                  /* 左下 */
+                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy + y), c);
+                mui_pixel_draw((int16_t)(cx - y), (int16_t)(cy + x), c);
+            }
         }
-        if (frac != 0) {
+        if (frac != 0) {                        /* 外侧强度 = frac */
             uint16_t c = mui_color_mix(fg, bg, frac);
-            mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy - y1), c);
-            mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy - y1), c);
-            mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy + y1), c);
-            mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy + y1), c);
-            mui_pixel_draw((int16_t)(cx + y1), (int16_t)(cy - x), c);
-            mui_pixel_draw((int16_t)(cx - y1), (int16_t)(cy - x), c);
-            mui_pixel_draw((int16_t)(cx + y1), (int16_t)(cy + x), c);
-            mui_pixel_draw((int16_t)(cx - y1), (int16_t)(cy + x), c);
+
+            if (quad & 0x01) {
+                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy - y1), c);
+                mui_pixel_draw((int16_t)(cx - y1), (int16_t)(cy - x), c);
+            }
+            if (quad & 0x02) {
+                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy - y1), c);
+                mui_pixel_draw((int16_t)(cx + y1), (int16_t)(cy - x), c);
+            }
+            if (quad & 0x04) {
+                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy + y1), c);
+                mui_pixel_draw((int16_t)(cx + y1), (int16_t)(cy + x), c);
+            }
+            if (quad & 0x08) {
+                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy + y1), c);
+                mui_pixel_draw((int16_t)(cx - y1), (int16_t)(cy + x), c);
+            }
         }
     }
+}
+
+void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
+                        uint16_t fg, uint16_t bg)
+{
+    mui_circle_arc_aa(cx, cy, r, 0x0F, fg, bg);   /* 整圆 = 四个象限拼起来 */
 }
 
 /* -------- 抗锯齿圆角矩形 -------- */
@@ -762,8 +801,9 @@ void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
  * @brief sqrt(n) 的 8 位定点值（即 floor(sqrt(n) * 256)），无除法
  * @note  n >= 65536 时退化为 4 位小数以避开 n << 16 溢出
  *        （圆角半径 r <= 90 时总是走 8 位小数路径，精度与逐像素版一致）
+ *        非 static：库内其它模块（如控件）也用得到，声明见 mui_math.h。
  */
-static uint32_t mui_sqrt_fp8(uint32_t n)
+uint32_t mui_sqrt_fp8(uint32_t n)
 {
     if (n < 65536u) {
         return mui_isqrt(n << 16);
@@ -772,13 +812,31 @@ static uint32_t mui_sqrt_fp8(uint32_t n)
 }
 
 /**
- * @brief 角区像素对圆角的覆盖率
- * @param ux 像素中心相对角圆心的横向距离（半像素单位，即 2*(px-cx)）
- * @param uy 同上，纵向
- * @param r  圆角半径（像素）
- * @return 0~255：dist <= r 时为 255（实心），dist >= r + 0.5 时为 0
+ * @brief 圆角在"距角圆心 dy 像素"处的半跨度（声明见 mui_math.h）
  */
-static uint8_t mui_corner_alpha(int16_t ux, int16_t uy, int16_t r)
+void mui_corner_span(int16_t dy, int16_t r, int16_t *dxf, int16_t *dxp)
+{
+    uint32_t dy2;
+
+    if (dy < 0) {
+        dy = (int16_t)(-dy);
+    }
+    dy2 = (uint32_t)dy * (uint32_t)dy;
+    if (dxf != NULL) {
+        uint32_t v = (uint32_t)r * r;
+        *dxf = (v > dy2) ? (int16_t)mui_isqrt(v - dy2) : 0;
+    }
+    if (dxp != NULL) {
+        uint32_t v = 4u * (uint32_t)(r + 1) * (uint32_t)(r + 1);
+        uint32_t d4 = 4u * dy2;
+        *dxp = (v > d4) ? (int16_t)(mui_isqrt(v - d4) >> 1) : 0;
+    }
+}
+
+/**
+ * @brief 角区像素对圆角的覆盖率（声明见 mui_math.h）
+ */
+uint8_t mui_corner_alpha(int16_t ux, int16_t uy, int16_t r)
 {
     uint32_t d = mui_sqrt_fp8((uint32_t)(ux * ux) + (uint32_t)(uy * uy));
     int32_t  cov = (int32_t)(r + 1) * 512 - (int32_t)d;   /* 半径 r+0.5 像素 + 半像素修正 */
@@ -851,11 +909,12 @@ void mui_round_rect_fill_aa(int16_t x, int16_t y, int16_t w, int16_t h,
         for (k = 0; k < r; k++) {
             int16_t py = (band == 0) ? (int16_t)(y + k) : (int16_t)(y + h - 1 - k);
             int16_t dy = (int16_t)((py > cy) ? (py - cy) : (cy - py));
-            uint32_t dy2 = (uint32_t)dy * dy;
-            int16_t dxf = (int16_t)mui_isqrt((uint32_t)r * r - dy2);   /* 满覆盖半跨度（像素） */
-            int16_t dxp = (int16_t)(mui_isqrt(4u * (uint32_t)(r + 1) * (r + 1)
-                                              - 4u * dy2) >> 1);       /* 可能仍有覆盖的半跨度 */
+            int16_t dxf;
+            int16_t dxp;
             int16_t px;
+
+            /* 跨度统一走 mui_corner_span()：与进度条填充共用同一套公式 */
+            mui_corner_span(dy, r, &dxf, &dxp);
 
             /* 满覆盖段（dist <= r）：一行一次批量填充；中间与主体重叠也无害 */
             if (dxf > 0) {
@@ -885,4 +944,43 @@ void mui_round_rect_fill_aa(int16_t x, int16_t y, int16_t w, int16_t h,
             }
         }
     }
+}
+
+void mui_round_rect_draw_aa(int16_t x, int16_t y, int16_t w, int16_t h,
+                            int16_t r, uint16_t fg, uint16_t bg)
+{
+    int16_t limit;
+
+    if (w < 1 || h < 1) {
+        return;
+    }
+    /* -------- 圆角半径限制到短边的一半（与硬边版同口径） -------- */
+    limit = (w < h) ? (int16_t)(w / 2) : (int16_t)(h / 2);
+    if (r > limit) {
+        r = limit;
+    }
+    if (r < 0) {
+        r = 0;
+    }
+    if (r == 0) {
+        mui_rect_draw(x, y, w, h, fg);      /* 轴对齐直边本就无锯齿 */
+        return;
+    }
+
+    /* -------- 四条直边：1px 轴对齐，覆盖率恒为 1，不需要混合 -------- */
+    mui_hline_draw((int16_t)(x + r), y, (int16_t)(w - 2 * r), fg);
+    mui_hline_draw((int16_t)(x + r), (int16_t)(y + h - 1),
+                   (int16_t)(w - 2 * r), fg);
+    mui_vline_draw(x, (int16_t)(y + r), (int16_t)(h - 2 * r), fg);
+    mui_vline_draw((int16_t)(x + w - 1), (int16_t)(y + r),
+                   (int16_t)(h - 2 * r), fg);
+
+    /* -------- 四角圆弧：圆心与硬边版逐项一致，可直接替换 -------- */
+    mui_circle_arc_aa((int16_t)(x + r), (int16_t)(y + r), r, 0x01, fg, bg);
+    mui_circle_arc_aa((int16_t)(x + w - 1 - r), (int16_t)(y + r), r, 0x02,
+                      fg, bg);
+    mui_circle_arc_aa((int16_t)(x + w - 1 - r), (int16_t)(y + h - 1 - r), r,
+                      0x04, fg, bg);
+    mui_circle_arc_aa((int16_t)(x + r), (int16_t)(y + h - 1 - r), r, 0x08,
+                      fg, bg);
 }

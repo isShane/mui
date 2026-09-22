@@ -74,6 +74,7 @@ mui_<对象>_<动作>[_<修饰>]
 | `mui_draw_ellipse` | `mui_ellipse_draw` |
 | `mui_color_mix` | **不变**（已符合） |
 | ——（新增能力，2026-09-22 已实现） | `mui_round_rect_fill_aa`（抗锯齿实心圆角矩形） |
+| ——（新增能力，2026-09-22 已实现） | `mui_round_rect_draw_aa`（抗锯齿空心圆角矩形，1px 描边） |
 
 > `hline` / `vline` 作为对象名保留（比 `line_draw_h` 更短、更贴近绘图习惯），
 > 缩写 `h`/`v` = 水平/垂直，是词表里唯一允许的缩写。

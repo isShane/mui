@@ -7,7 +7,7 @@
 ## 特性
 
 - 图元：矩形/圆角矩形（实心+空心）、直线（含 Bresenham 任意斜率）、圆、椭圆、三角形、单像素，全部自动裁剪，越界参数绝对安全
-- 抗锯齿：Wu 直线/圆、**实心圆角矩形**、8bpp alpha 蒙版图标、LVGL 转换字体渲染（256 级透明混合）；缓冲后端可自动回读屏幕底色，形状能压在图片/渐变上
+- 抗锯齿：Wu 直线/圆、**实心/空心（描边）圆角矩形**、**控件圆角**（进度条的槽/边框/填充，`style.aa` 默认开启）、8bpp alpha 蒙版图标、LVGL 转换字体渲染（256 级透明混合）；缓冲后端可自动回读屏幕底色，形状能压在图片/渐变上
 - 图片：RGB565 不透明 / 色键透明 / 8bpp 蒙版三种绘制模式
 - 字体：LVGL 导出的 8bpp 抗锯齿字体（`tools/lvgl_font_conv.py` 转换生成）
 - 控件：按钮 / 文本标签 / 进度条 —— 统一为**保留模式对象**（`init` 一次 → `set_*` 改状态 → 每帧 `draw`），只重画变化部分
@@ -23,6 +23,7 @@
 │   ├── mui_port.h      移植接口（只需实现 4 个函数）
 │   ├── mui_conf.h      编译期配置（输出后端 / 缓冲尺寸 / 脏矩形）
 │   ├── mui_gfx.c       图形核心（图元 / 图片 / AA），纯整数运算
+│   ├── mui_math.h      库内整数数学（isqrt / 8.8 定点开方；定义为 mui_gfx.c，供控件复用）
 │   ├── mui_out.c/h     输出层（直绘下是宏；缓冲后端负责推屏）
 │   ├── mui_font.c/h    字体渲染（LVGL 转换字体，8bpp 抗锯齿）
 │   ├── mui_button.c/h  按钮控件（保留模式对象）
@@ -164,6 +165,7 @@ mui_pixel_draw(x, y, color);                     /* 单像素 */
 mui_color_mix(fg, bg, alpha);                    /* 0~255 混合，AA 及半透明基础 */
 mui_line_draw_aa / mui_circle_draw_aa
 mui_round_rect_fill_aa(x, y, w, h, r, fg, bg);   /* 抗锯齿实心圆角矩形 */
+mui_round_rect_draw_aa(x, y, w, h, r, fg, bg);   /* 抗锯齿空心圆角矩形（1px 描边） */
 
 /* 文字（LVGL 转换字体，8bpp 抗锯齿） */
 mui_text_draw(x, y, "1433", &font, fg, bg, scale);
@@ -182,8 +184,8 @@ mui_button_draw(&btn);            mui_button_touch(&btn, ev);   /* 返回 1 = �
 mui_label_init(&lbl, x, y, &font, fg, bg, scale);
 mui_label_set_text(&lbl, "12:30");               /* 只重画差异部分 */
 
-mui_progressbar_init(&pb, x, y, w, h, &style);
-mui_progressbar_set_value(&pb, 70);              /* 只重画变化区间 */
+mui_progressbar_init(&pb, x, y, w, h, &style);   /* style.aa 默认 1：圆角边缘抗锯齿 */
+mui_progressbar_set_value(&pb, 70);              /* 只重画变化区间（AA 也只混被重画的那几列） */
 ```
 
 按钮样式（画之前配置好）：

@@ -533,6 +533,20 @@ static int color_close(uint16_t a, uint16_t b, int tol)
 }
 
 /**
+ * @brief 把"黑前景 + 白背景"下的混色像素反推回 alpha（仅测试用）
+ * @note  mui_color_mix(MUI_BLACK, MUI_WHITE, a) 的绿通道 ≈ 63*a/255，且单调
+ */
+static uint8_t alpha_of(uint16_t c)
+{
+    int g = (int)((c >> 5) & 0x3F);      /* 6 位绿通道 */
+
+    if (g > 63) {
+        g = 63;
+    }
+    return (uint8_t)((63 - g) * 255 / 63);
+}
+
+/**
  * @brief 测试：抗锯齿圆角矩形 —— 与"逐像素 + 浮点覆盖率"的参考实现逐像素一致
  * @note  允许每通道 ±1 的偏差：库内用整数开方（floor），参考用浮点，
  *        覆盖率换算后 alpha 最多差 1 级
@@ -621,6 +635,341 @@ static void test_round_rect_aa_bg(void)
 }
 
 
+/* -------- 测试：AA 空心圆角矩形（1px 描边，四角圆弧混色） -------- */
+
+#define RRD_X (10)
+#define RRD_Y (10)
+#define RRD_W (60)
+#define RRD_H (40)
+#define RRD_R (12)
+
+/** @brief 扫描区域：非背景像素的包围盒（相对坐标）与"混色像素"数量 */
+static void rrd_scan(int x0, int y0, int w, int h, uint16_t fg, uint16_t bg,
+                     int *bb, int *blend)
+{
+    int i, j;
+
+    mui_screen_flush();
+    bb[0] = w;
+    bb[1] = h;
+    bb[2] = -1;
+    bb[3] = -1;
+    *blend = 0;
+    for (j = 0; j < h; j++) {
+        for (i = 0; i < w; i++) {
+            uint16_t c = sim_get_fb()[(y0 + j) * SIM_W + (x0 + i)];
+
+            if (c == bg) {
+                continue;
+            }
+            if (i < bb[0]) { bb[0] = i; }
+            if (j < bb[1]) { bb[1] = j; }
+            if (i > bb[2]) { bb[2] = i; }
+            if (j > bb[3]) { bb[3] = j; }
+            if (c != fg) {
+                (*blend)++;
+            }
+        }
+    }
+}
+
+static void test_round_rect_draw_aa(void)
+{
+    int bb_hard[4], bb_aa[4];
+    int bl_hard, bl_aa;
+    int c, bad = 0, bad_ink = 0;
+
+    /* 黑描边 + 白底：混色像素的绿通道直接可反推 alpha（见 alpha_of） */
+    mui_screen_clear(TEST_BG);
+    mui_round_rect_draw(RRD_X, RRD_Y, RRD_W, RRD_H, RRD_R, MUI_BLACK);
+    rrd_scan(RRD_X - 3, RRD_Y - 3, RRD_W + 6, RRD_H + 6, MUI_BLACK, TEST_BG,
+             bb_hard, &bl_hard);
+
+    mui_screen_clear(TEST_BG);
+    mui_round_rect_draw_aa(RRD_X, RRD_Y, RRD_W, RRD_H, RRD_R, MUI_BLACK,
+                           TEST_BG);
+    rrd_scan(RRD_X - 3, RRD_Y - 3, RRD_W + 6, RRD_H + 6, MUI_BLACK, TEST_BG,
+             bb_aa, &bl_aa);
+
+    CHECK(bl_hard == 0, "硬边空心圆角矩形不应出现混色像素");
+    CHECK(bl_aa > 20, "AA 空心圆角矩形未在四角产生混色像素");
+    /* 轮廓范围必须一致：AA 只把台阶换成过渡色，不向外长一圈 */
+    CHECK(bb_hard[0] == bb_aa[0] && bb_hard[1] == bb_aa[1]
+          && bb_hard[2] == bb_aa[2] && bb_hard[3] == bb_aa[3],
+          "AA 描边的轮廓范围与硬边版不一致");
+
+    /* 四条直边必须是纯描边色（轴对齐、覆盖率恒为 1，不该混色） */
+    mui_screen_flush();
+    for (c = RRD_R + 1; c < RRD_W - RRD_R - 1; c++) {
+        if (sim_get_fb()[RRD_Y * SIM_W + RRD_X + c] != MUI_BLACK) {
+            bad++;
+        }
+        if (sim_get_fb()[(RRD_Y + RRD_H - 1) * SIM_W + RRD_X + c] != MUI_BLACK) {
+            bad++;
+        }
+    }
+    for (c = RRD_R + 1; c < RRD_H - RRD_R - 1; c++) {
+        if (sim_get_fb()[(RRD_Y + c) * SIM_W + RRD_X] != MUI_BLACK) {
+            bad++;
+        }
+        if (sim_get_fb()[(RRD_Y + c) * SIM_W + RRD_X + RRD_W - 1] != MUI_BLACK) {
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "AA 描边的直边段不纯（不该混色或丢像素）");
+
+    /* 圆角几何精度（两条独立性质，都在左上角）：
+     *   ① 每列墨量质心贴合解析曲线 ρ(x)=sqrt(r²-x²)（Wu 的墨量质感上是"贴曲线"的）；
+     *   ② 所有落墨像素都必须落在描边带内（|距离-r| ≤ 1.5px），不能有游离像素。
+     * 只查避开直边所在的首末列。
+     * 注：不校验"每列墨量和恒为 255"——Wu 每次迭代会把 255 分给**两个相邻列**，
+     *     单列墨量本就随曲率在 255~360 间浮动（这是算法的固有性质，不是缺陷）。 */
+    bad = 0;
+    bad_ink = 0;
+    for (c = 1; c <= RRD_R - 2; c++) {
+        int cx = RRD_X + RRD_R;
+        int cy = RRD_Y + RRD_R;
+        int sum = 0, wsum = 0, dy;
+        double rho = sqrt((double)RRD_R * RRD_R - (double)c * c);
+        double cen;
+
+        for (dy = 0; dy <= RRD_R + 2; dy++) {
+            uint16_t col = sim_get_fb()[(cy - dy) * SIM_W + (cx - c)];
+            int a;
+            double d;
+
+            if (col == TEST_BG) {
+                continue;
+            }
+            a = alpha_of(col);
+            sum += a;
+            wsum += a * dy;
+            d = sqrt((double)c * c + (double)dy * dy);
+            if (fabs(d - (double)RRD_R) > 1.5) {
+                bad_ink++;          /* 落墨跑到描边带外面去了 */
+            }
+        }
+        if (sum == 0) {
+            continue;
+        }
+        cen = (double)wsum / (double)sum;
+        if (fabs(cen - rho) > 0.75) {
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "AA 描边圆角的墨量质心偏离解析曲线超过 0.75px");
+    CHECK(bad_ink == 0, "AA 描边圆角有超出描边带的游离像素");
+}
+
+/**
+ * @brief 测试：未填充的那一段（槽）轮廓仍必须是抗锯齿的
+ *
+ * 两种到达方式都要查：
+ *   a) 初次绘制就是部分进度（全量路径，erase = 0）；
+ *   b) 先满进度再降到部分进度（增量路径，erase = 1 —— 擦除若按宽了/按纯槽色
+ *      重画，就会把槽的圆角轮廓擦成硬台阶，低分辨率下一眼可见）。
+ * @return 顶部角带内"混色像素"的个数（既非页面底色、也非纯槽色/纯填充色）
+ */
+static int pb_track_aa_blends(int16_t x, int16_t y, int16_t w, uint8_t first,
+                              uint8_t then, uint8_t has_then)
+{
+    static const mui_progressbar_style_t st = {
+        .bg = MUI_LIGHTGREY, .fg = MUI_BLUE, .border = MUI_LIGHTGREY,
+        .radius = 0, .dir = MUI_PROGRESSBAR_VERTICAL, .aa = 1,
+        .screen_bg = TEST_BG
+    };
+    static mui_progressbar_t pb;
+    int row, i, blend = 0;
+
+    mui_screen_clear(TEST_BG);
+    mui_progressbar_init(&pb, x, y, w, 76, &st);
+    mui_progressbar_set_value(&pb, first);
+    if (has_then) {
+        mui_progressbar_set_value(&pb, then);
+    }
+    mui_screen_flush();
+
+    for (row = y; row < (int16_t)(y + 15); row++) {
+        for (i = 0; i < w; i++) {
+            uint16_t c = sim_get_fb()[row * SIM_W + x + i];
+
+            if (c == TEST_BG || c == MUI_LIGHTGREY || c == MUI_BLUE) {
+                continue;               /* 纯色：底/槽/填充 */
+            }
+            blend++;
+        }
+    }
+    return blend;
+}
+
+static void test_progressbar_track_aa(void)
+{
+    int a = pb_track_aa_blends(20, 20, 30, 55, 0, 0);      /* 全量 → 部分 */
+    int b = pb_track_aa_blends(20, 20, 30, 100, 55, 1);    /* 满 → 增量降到部分 */
+
+    CHECK(a > 10, "初次即部分进度时，槽的圆角轮廓没有抗锯齿");
+    CHECK(b > 10, "从满进度降档后，槽的圆角轮廓被擦成了硬台阶");
+}
+
+/**
+ * @brief 测试：无边框进度条的填充必须"铺满底板"
+ *
+ * 这是"用几何 1:1 复刻位图版胶囊"的前提：位图版只有填充、没有槽，
+ * 所以几何版在 border == bg（视觉无边框）时必须让填充覆盖整块底板，
+ * 且轮廓与 mui_round_rect_fill_aa() 画出的同几何形状逐像素一致。
+ * （曾经的 bug：填充按线宽退让 1px、角带只混 1 个像素 → 边沿一圈槽色。）
+ */
+static void test_progressbar_full_cover(void)
+{
+    static const mui_progressbar_style_t st = {
+        .bg = MUI_LIGHTGREY, .fg = MUI_BLUE, .border = MUI_LIGHTGREY,
+        .radius = 0, .dir = MUI_PROGRESSBAR_VERTICAL, .aa = 1,
+        .screen_bg = TEST_BG
+    };
+    static mui_progressbar_t pb;
+    const int16_t x = 20, y = 20, w = 30, h = 76, r = 15;  /* r = 自动值（限 w/2） */
+    int i, bad = 0;
+
+    /* 参考：同几何的实心 AA 圆角矩形 = 位图版胶囊的形状 */
+    mui_screen_clear(TEST_BG);
+    mui_round_rect_fill_aa(x, y, w, h, r, MUI_BLUE, TEST_BG);
+    mui_screen_flush();
+    memcpy(aa_expect, sim_get_fb(), sizeof(aa_expect));
+
+    /* 进度条：无边框 + AA + 满进度 → 填充应把底板完全盖住 */
+    mui_screen_clear(TEST_BG);
+    mui_progressbar_init(&pb, x, y, w, h, &st);
+    mui_progressbar_set_value(&pb, 100);
+    mui_screen_flush();
+
+    for (i = 0; i < SIM_W * SIM_H; i++) {
+        if (!color_close(sim_get_fb()[i], aa_expect[i], 1)) {
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "满进度 + 无边框时，填充未与底板（AA 圆角形状）逐像素吻合");
+}
+
+/* -------- 测试：进度条填充的圆角抗锯齿（同一几何，只差 style.aa） -------- */
+
+#define PBAA_X_HARD (10)     /**< 硬边条左边界 */
+#define PBAA_X_AA   (50)     /**< AA 条左边界 */
+#define PBAA_Y      (10)
+#define PBAA_W      (30)
+#define PBAA_H      (76)
+
+/**
+ * @brief 扫描一根进度条的像素：颜色种数 / 中间色像素数 / 实际轮廓范围
+ * @param x0,y0,w,h 扫描区域（比进度条大一圈也没关系，背景不去管）
+ * @param out_d  颜色种数
+ * @param out_mid 中间色像素数（既非白、非槽色、也非填充色 → 只可能来自混色）
+ * @param bb     输出轮廓（x0,y0,x1,y1，相对扫描区域；全为背景时输出 (0,0,-1,-1)）
+ */
+static void pb_scan(int x0, int y0, int w, int h, int *out_d, int *out_mid,
+                    int *bb)
+{
+    uint16_t seen[128];
+    int n = 0;
+    int i, j;
+    int mid = 0;
+    int x1 = -1, y1 = -1, sx = w, sy = h;
+
+    mui_screen_flush();     /* 缓冲后端：先推屏再读 */
+
+    for (j = 0; j < h; j++) {
+        for (i = 0; i < w; i++) {
+            uint16_t c = sim_get_fb()[(y0 + j) * SIM_W + (x0 + i)];
+            int k, found = 0;
+
+            for (k = 0; k < n; k++) {
+                if (seen[k] == c) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found && n < 128) {
+                seen[n++] = c;
+            }
+            if (c != TEST_BG) {
+                if (i < sx) { sx = i; }
+                if (j < sy) { sy = j; }
+                if (i > x1) { x1 = i; }
+                if (j > y1) { y1 = j; }
+            }
+            if (c != TEST_BG && c != MUI_LIGHTGREY && c != MUI_BLUE) {
+                mid++;      /* 只可能来自"与背景混合后的边界像素" */
+            }
+        }
+    }
+    *out_d = n;
+    *out_mid = mid;
+    bb[0] = sx;
+    bb[1] = sy;
+    bb[2] = x1;
+    bb[3] = y1;
+}
+
+static void test_progressbar_aa(void)
+{
+    static const mui_progressbar_style_t st_hard = {
+        .bg = MUI_LIGHTGREY, .fg = MUI_BLUE, .border = MUI_LIGHTGREY,
+        .radius = 0, .dir = MUI_PROGRESSBAR_VERTICAL, .aa = 0,
+        .screen_bg = TEST_BG
+    };
+    static const mui_progressbar_style_t st_aa = {
+        .bg = MUI_LIGHTGREY, .fg = MUI_BLUE, .border = MUI_LIGHTGREY,
+        .radius = 0, .dir = MUI_PROGRESSBAR_VERTICAL, .aa = 1,
+        .screen_bg = TEST_BG
+    };
+    static mui_progressbar_t pb_hard;
+    static mui_progressbar_t pb_aa;
+    int d_hard, d_aa, m_hard, m_aa;
+    int bb_hard[4], bb_aa[4];
+    int row, asym = 0;
+
+    mui_screen_clear(TEST_BG);
+    mui_progressbar_init(&pb_hard, PBAA_X_HARD, PBAA_Y, PBAA_W, PBAA_H, &st_hard);
+    mui_progressbar_init(&pb_aa, PBAA_X_AA, PBAA_Y, PBAA_W, PBAA_H, &st_aa);
+    mui_progressbar_set_value(&pb_hard, 50);
+    mui_progressbar_set_value(&pb_aa, 50);
+
+    pb_scan(PBAA_X_HARD, PBAA_Y, PBAA_W, PBAA_H, &d_hard, &m_hard, bb_hard);
+    pb_scan(PBAA_X_AA, PBAA_Y, PBAA_W, PBAA_H, &d_aa, &m_aa, bb_aa);
+
+    /* 1) 硬边版圆角是整数跨度，边界只能落在"槽色/填充色/背景色"三者上 */
+    CHECK(m_hard == 0, "硬边进度条不应出现混色的中间像素");
+    /* 2) AA 版必须在边界产生中间色（否则等于没抗锯齿） */
+    CHECK(m_aa > 20, "AA 进度条未在圆角边界产生混色像素");
+    CHECK(d_aa > d_hard, "AA 版的颜色种数应多于硬边版");
+    /* 3) 抗锯齿只改边缘观感、不改几何：轮廓范围必须与硬边版逐项一致 */
+    CHECK(bb_hard[0] == bb_aa[0] && bb_hard[1] == bb_aa[1]
+          && bb_hard[2] == bb_aa[2] && bb_hard[3] == bb_aa[3],
+          "AA 版轮廓范围与硬边版不一致（几何被改动了）");
+    /* 4) 胶囊左右对称：同一行最左与最右的边界像素颜色必须相同 */
+    mui_screen_flush();
+    for (row = 0; row < bb_aa[3] - bb_aa[1] + 1; row++) {
+        int y = PBAA_Y + bb_aa[1] + row;
+        int lx = -1, i;
+        uint16_t lc = 0, rc = 0;
+
+        for (i = 0; i < PBAA_W; i++) {
+            uint16_t c = sim_get_fb()[y * SIM_W + PBAA_X_AA + i];
+
+            if (c != TEST_BG) {
+                if (lx < 0) {
+                    lx = i;
+                    lc = c;
+                }
+                rc = c;
+            }
+        }
+        if (lx >= 0 && lc != rc) {
+            asym++;
+        }
+    }
+    CHECK(asym == 0, "AA 版左右边界不对称（开方/内缩索引有误）");
+}
+
 static const char *demo_png_name(void)
 {
 #if MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL
@@ -639,6 +988,11 @@ static void render_demo(void)
     /* 顶部标题栏：圆角矩形 */
     mui_round_rect_fill(10, 10, 300, 40, 12, MUI_NAVY);
     mui_round_rect_draw(10, 10, 300, 40, 12, MUI_CYAN);
+
+    /* 标题栏上叠两个空心圆角矩形作对照：左硬边 / 右 AA（白描边压在深蓝底上，
+     * 缓冲后端会自动取回真实底色，直绘后端用传入的 bg） */
+    mui_round_rect_draw(14, 14, 44, 28, 8, MUI_WHITE);
+    mui_round_rect_draw_aa(70, 14, 44, 28, 8, MUI_WHITE, MUI_NAVY);
 
     /* 色块矩阵 */
     for (int i = 0; i < 6; i++) {
@@ -675,6 +1029,31 @@ static void render_demo(void)
         mui_progressbar_set_value(&pb, 70);
     }
 
+    /* 中部空档：抗锯齿对照（同一几何、同一进度，只差 style.aa）
+     *   上 = 硬边（圆角是整数台阶）   下 = AA（圆角边界按覆盖率混色）
+     * r 显式取 h/2 → 两端半圆（胶囊），圆角占比大，肉眼与逐像素都好判断。 */
+    {
+        static const mui_progressbar_style_t st_hard = {
+            MUI_LIGHTGREY, MUI_BLUE, MUI_LIGHTGREY, 5,
+            MUI_PROGRESSBAR_HORIZONTAL, 0, MUI_WHITE,
+        };
+        static const mui_progressbar_style_t st_aa = {
+            MUI_LIGHTGREY, MUI_BLUE, MUI_LIGHTGREY, 5,
+            MUI_PROGRESSBAR_HORIZONTAL, 1, MUI_WHITE,
+        };
+        static mui_progressbar_t pb_hard;
+        static mui_progressbar_t pb_aa;
+
+        mui_progressbar_init(&pb_hard, 6, 90, 116, 10, &st_hard);
+        mui_progressbar_init(&pb_aa, 6, 102, 116, 10, &st_aa);
+        mui_progressbar_set_value(&pb_hard, 60);
+        mui_progressbar_set_value(&pb_aa, 100);   /* 先满，再降档 → 走增量擦除路径
+                                                   * （擦除若按纯槽色铺满，槽的圆角
+                                                   *   轮廓会变成硬台阶，见
+                                                   *   test_progressbar_track_aa） */
+        mui_progressbar_set_value(&pb_aa, 60);
+    }
+
     mui_screen_flush();   /* 缓冲后端：推屏后才能导出完整画面 */
     sim_export_png(demo_png_name());
 }
@@ -695,6 +1074,10 @@ int main(void)
     test_label_exact_span();
     test_round_rect_aa();
     test_round_rect_aa_bg();
+    test_round_rect_draw_aa();
+    test_progressbar_aa();
+    test_progressbar_track_aa();
+    test_progressbar_full_cover();
 
     render_demo();
 

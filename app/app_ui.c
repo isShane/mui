@@ -6,7 +6,7 @@
  *   1. 品牌 logo（白底彩色位图，顶部居中）
  *   2. 中部 32px 大号运行时间（mm:ss，每秒脏区重画，位置与 demo 一致）
  *   3. 底部四等分按钮 + Mode 按钮（mui_button_t 对象，OO 风格：init / set_xxx / draw）
- *   4. 第 3 页进度条动画（img_pro_0~10 共 11 帧循环播放，替代原进度条控件）
+ *   4. 第 3 页进度条对比：图片版（img_pro_0~10 动画）vs 进度条控件（硬边 / 圆角抗锯齿）
  *   5. 物理按键接入：app_ui_key() 按 s_key_fn 表分派键号到功能，
  *      默认单个键循环切页（换键/换功能只改那张表）；鼠标与触摸屏另走触摸链路
  *   6. 页面（Tab）：底部四键对应 4 个页面。屏幕分三层——上部 logo+分隔线、
@@ -29,6 +29,7 @@
 #include "mui.h"
 #include "mui_button.h"     /* 按钮 API（新版已从 mui.h 拆到独立头文件） */
 #include "mui_label.h"      /* 文本标签对象（自动擦旧画新） */
+#include "mui_progressbar.h" /* 进度条控件（第 3 页与图片版做对照） */
 #include "mui_font.h"
 #include "img_logo.h"
 #include "bsp_lcd.h"
@@ -167,16 +168,51 @@ static void ui_clock_update(uint32_t sec)
 
 static uint8_t s_page = 0;              /**< 当前页（0~3） */
 
-/* -------- 第 3 页：进度条动画（img_pro_0~10 共 11 帧循环播放） -------- */
+/* -------- 第 3 页：进度条对比（图片版 vs 控件版，同一进度同步动画） --------
+ * 三根**同形同色**的胶囊并排，便于逐像素对照抗锯齿效果：
+ *   左 IMG ：img_pro_0~10 图片版（11 帧循环；抗锯齿是烘焙进图片像素的）
+ *   中 HARD：进度条控件 + style.aa = 0（硬边，圆角处能看到台阶）
+ *   右 AA  ：进度条控件 + style.aa = 1（圆角抗锯齿，几何绘制、0 图片资源）
+ * 三者几何完全一致：胶囊宽 30、高 76、圆角半径 15（= 宽/2）、顶边对齐在 y=34。
+ * 图片画布是 34 宽（胶囊在其中 x=2..31，左右各留 2px），故画在 x=7，
+ * 其胶囊正好落在 9..38，与两个控件（49..78 / 89..118）等宽同高、间距均 10px。
+ * 控件配色照图片取（槽 = 图片胶囊主色 0xD6BA），这样"外轮廓"可直接对照。
+ */
 static const mui_image_t *const s_pro_frames[] = {
     &pro_0, &pro_1, &pro_2, &pro_3, &pro_4, &pro_5,
     &pro_6, &pro_7, &pro_8, &pro_9, &pro_10
 };
 #define PRO_FRAME_NUM  ((uint8_t)(sizeof(s_pro_frames) / sizeof(s_pro_frames[0])))
-#define PRO_W          (38)   /* 单帧宽（与 assets/img_pro_*.c 一致） */
-#define PRO_H          (76)   /* 单帧高 */
-#define PRO_X          ((int16_t)((BSP_LCD_WIDTH - PRO_W) / 2))
-#define PRO_Y          ((int16_t)(UI_CONTENT_TOP + (UI_CONTENT_H - PRO_H) / 2))
+#define PRO_IMG_X      (7)        /* 图片画布左上角（画布 34 宽，胶囊在其中 x=2..31） */
+#define PRO_BAR_Y      (34)       /* 三根胶囊的统一顶边（标签占 22..32，内容区到 110） */
+#define PRO_BAR_W      (30)       /* 胶囊宽（两个控件以此为宽） */
+#define PRO_BAR_H      (76)       /* 胶囊高（= 图片资源高度） */
+#define PRO_HARD_X     (49)       /* 硬边控件左边 */
+#define PRO_AA_X       (89)       /* AA 控件左边 */
+#define PRO_LABEL_Y    (22)       /* 三行小标签（11px 行高，正好塞在内容区顶边下） */
+#define PRO_TRACK_COLOR (0xD6BA)  /* 图片胶囊主色（原资源色），控件槽照它取 */
+
+/* 两个控件只有 aa 一处不同：同一份几何、两条绘制路径，差异只可能来自抗锯齿 */
+static const mui_progressbar_style_t s_pb_hard_style = {
+    .bg        = PRO_TRACK_COLOR,
+    .fg        = THEME_DEEP_BLUE,
+    .border    = PRO_TRACK_COLOR,   /* 与槽同色：视觉无边框（但仍是 1px 硬边） */
+    .radius    = 0,                 /* 自动 = min(h/4, w/2) = 15 → 胶囊 */
+    .dir       = MUI_PROGRESSBAR_VERTICAL,
+    .aa        = 0,
+    .screen_bg = UI_BG
+};
+static const mui_progressbar_style_t s_pb_aa_style = {
+    .bg        = PRO_TRACK_COLOR,
+    .fg        = THEME_DEEP_BLUE,
+    .border    = PRO_TRACK_COLOR,   /* aa 打开时不画描边，此字段不生效 */
+    .radius    = 0,
+    .dir       = MUI_PROGRESSBAR_VERTICAL,
+    .aa        = 1,
+    .screen_bg = UI_BG              /* 仅直绘后端用；缓冲后端自动回读真实底色 */
+};
+static mui_progressbar_t s_pb_hard;
+static mui_progressbar_t s_pb_aa;
 static uint8_t  s_pro_frame = 0;  /**< 当前动画帧（0~10） */
 static uint32_t s_pro_tick  = 0;  /**< 上次帧切换时间（ms） */
 
@@ -210,16 +246,46 @@ static void ui_page_draw_home(void)
     ui_draw_info_bar();
 }
 
+/** @brief 当前帧对应的进度值：图片胶囊高 76→0 即 100%→0% */
+static uint8_t ui_pro_value(void)
+{
+    return (uint8_t)((PRO_FRAME_NUM - 1 - s_pro_frame) * 100
+                     / (PRO_FRAME_NUM - 1));
+}
+
+/** @brief 画一行小标签，居中在指定胶囊之上（scale 1，行高 11px） */
+static void ui_pro_draw_label(int16_t bar_x, const char *txt)
+{
+    int16_t tw = mui_text_width(txt, &harmony_os_10, 1);
+
+    mui_text_draw((int16_t)(bar_x + (PRO_BAR_W - tw) / 2), PRO_LABEL_Y, txt,
+                  &harmony_os_10, MUI_DARKGREY, UI_BG, 1);
+}
+
 /**
- * @brief 绘制第 3 页：进度条动画当前帧（循环播放 img_pro_0~10）
- * @note  内容区刚被清空，直接绘制当前帧即可；重置计时避免切页后立刻跳帧
+ * @brief 绘制第 3 页：图片版 + 硬边控件 + AA 控件（同一进度值同步）
+ * @note  内容区刚被清空，故把两个控件的 drawn 清 0，让它们走"无擦除的全量绘制"
+ *        分支，一次把槽与填充画对；否则 set_value 会去擦并不存在的旧填充。
+ *        重置计时避免切页后立刻跳帧。
  */
 static void ui_page_draw_progress(void)
 {
     const mui_image_t *img = s_pro_frames[s_pro_frame];
+    uint8_t v;
 
     s_pro_tick = bsp_system_tick_ms();
-    mui_image_draw(PRO_X, PRO_Y, img->w, img->h, img->data);
+
+    ui_pro_draw_label((int16_t)(PRO_IMG_X + 2), "IMG");   /* 图片胶囊在画布内 x=2 */
+    ui_pro_draw_label(PRO_HARD_X, "HARD");
+    ui_pro_draw_label(PRO_AA_X, "AA");
+
+    mui_image_draw(PRO_IMG_X, PRO_BAR_Y, img->w, img->h, img->data);
+
+    v = ui_pro_value();
+    s_pb_hard.drawn = 0;
+    s_pb_aa.drawn = 0;
+    mui_progressbar_set_value(&s_pb_hard, v);
+    mui_progressbar_set_value(&s_pb_aa, v);
 }
 
 /**
@@ -516,6 +582,12 @@ void app_ui_init(void)
     mui_button_set_pressed(&s_mode, 1);
     mui_button_set_latch(&s_mode, 1);  /* 锁存：物理键/点击切换模式并保持 */
 
+    /* ---- 第 3 页的两个进度条控件（内容由 ui_page_draw_progress 绘制） ---- */
+    mui_progressbar_init(&s_pb_hard, PRO_HARD_X, PRO_BAR_Y, PRO_BAR_W, PRO_BAR_H,
+                         &s_pb_hard_style);
+    mui_progressbar_init(&s_pb_aa, PRO_AA_X, PRO_BAR_Y, PRO_BAR_W, PRO_BAR_H,
+                         &s_pb_aa_style);
+
     ui_clock_layout();
 
     /* ---- 首次显示第 1 页（清内容区后完整绘制） ---- */
@@ -541,14 +613,18 @@ void app_ui_frame(void)
         ui_clock_update(sec);
     }
 
-    /* 第 3 页：进度条动画循环播放（每 100ms 切一帧，11 帧循环） */
+    /* 第 3 页：进度条动画循环播放（每 100ms 切一帧，11 帧循环）
+     * 图片必须整幅重画（位图没有增量能力）；两个控件调 set_value，库只重画
+     * 高度变化的那几行（约 10 行 + 抗锯齿边界像素），写屏量差一个数量级。 */
     if (s_page == 2 && ms - s_pro_tick >= 100) {
         const mui_image_t *img;
 
         s_pro_tick = ms;
         s_pro_frame = (uint8_t)((s_pro_frame + 1) % PRO_FRAME_NUM);
         img = s_pro_frames[s_pro_frame];
-        mui_image_draw(PRO_X, PRO_Y, img->w, img->h, img->data);
+        mui_image_draw(PRO_IMG_X, PRO_BAR_Y, img->w, img->h, img->data);
+        mui_progressbar_set_value(&s_pb_hard, ui_pro_value());
+        mui_progressbar_set_value(&s_pb_aa, ui_pro_value());
     }
 
     mui_screen_flush();    /* 缓冲后端：本帧改动统一推屏；直绘下为空操作 */
