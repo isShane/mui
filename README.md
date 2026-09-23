@@ -9,7 +9,7 @@
 - 图元：矩形/圆角矩形（实心+空心）、直线（含 Bresenham 任意斜率）、圆、椭圆、三角形、单像素，全部自动裁剪，越界参数绝对安全
 - 抗锯齿：Wu 直线/圆、**实心/空心（描边）圆角矩形**、**控件圆角**（进度条的槽/边框/填充，`style.aa` 默认开启）、8bpp alpha 蒙版图标、LVGL 转换字体渲染（256 级透明混合）；缓冲后端可自动回读屏幕底色，形状能压在图片/渐变上
 - 图片：RGB565 不透明 / 色键透明 / 8bpp 蒙版三种绘制模式
-- 字体：LVGL 导出的 8bpp 抗锯齿字体（`tools/lvgl_font_conv.py` 转换生成）
+- 字体：LVGL 导出的 8bpp 抗锯齿字体（`tools/lvgl_font_conv.py` 转换生成）；支持**软件加粗 / 下划线 / 删除线**（`MUI_TEXT_*` 标志，零额外字库）
 - 控件：按钮 / 文本标签 / 进度条 —— 统一为**保留模式对象**（`init` 一次 → `set_*` 改状态 → 每帧 `draw`），只重画变化部分
 - 命名：统一 `mui_<对象>_<动作>[_<修饰>]`，规则见 [docs/naming.md](docs/naming.md)
 - 工具链：Python 图片转换器、LVGL 字体转换器、PNG 截图导出（零依赖编码器）
@@ -171,6 +171,13 @@ mui_round_rect_draw_aa(x, y, w, h, r, fg, bg);   /* 抗锯齿空心圆角矩形�
 mui_text_draw(x, y, "1433", &font, fg, bg, scale);
 mui_text_width("1433", &font, scale);
 
+/* 文字装饰（加粗 / 下划线 / 删除线，flags 位或；不带 _ex 的旧函数 = flags 0）
+ * 加粗：字形膨胀 1px，步进与包围盒不变（≥16px 字号效果较好；要更好就用粗体字重字库）
+ * 下划线：基线下方 1px，贯穿整串；可能落在行框外，覆盖行数用 mui_text_height 查 */
+mui_text_draw_ex(x, y, "1433", &font, fg, bg, scale,
+                 MUI_TEXT_BOLD | MUI_TEXT_UNDERLINE);
+mui_text_height(&font, scale, MUI_TEXT_UNDERLINE);   /* 含装饰的纵向行数 */
+
 /* 图片 */
 mui_image_draw(x, y, w, h, data);                /* RGB565 不透明 */
 mui_image_draw_key(x, y, w, h, data, key);       /* key 色像素透明 */
@@ -179,10 +186,14 @@ mui_image_draw_mask(x, y, w, h, data, fg, bg);   /* 8bpp 蒙版，单色图标�
 /* 控件：保留模式对象 —— init 一次 → set_* 改状态 → 每帧 draw */
 mui_button_init(&btn, x, y, w, h, &style, "TEXT", &icon);
 mui_button_set_font(&btn, &font);  mui_button_set_pressed(&btn, 1);
+mui_button_set_style(&btn, &other_style);   /* 换配色（含文字色 fg，颜色统一在样式里，无逐色 setter） */
 mui_button_draw(&btn);            mui_button_touch(&btn, ev);   /* 返回 1 = 被点击 */
 
 mui_label_init(&lbl, x, y, &font, fg, bg, scale);
 mui_label_set_text(&lbl, "12:30");               /* 只重画差异部分 */
+mui_label_set_decor(&lbl, MUI_TEXT_UNDERLINE);   /* 可选：加粗/下划线/删除线 */
+mui_label_set_fg(&lbl, MUI_RED);                 /* 换字色（装饰线一起变，无需重设文本） */
+mui_label_set_colors(&lbl, MUI_RED, MUI_BLACK);  /* 底色也变：用新底色擦旧再画 */
 
 mui_progressbar_init(&pb, x, y, w, h, &style);   /* style.aa 默认 1：圆角边缘抗锯齿 */
 mui_progressbar_set_value(&pb, 70);              /* 只重画变化区间（AA 也只混被重画的那几列） */

@@ -4,6 +4,9 @@
  *
  * 字体资源由 tools/lvgl_font_conv.py 从 LVGL 导出的 .c 转换生成；
  * 本文件只依赖图形 API 的调用方，平台无关。
+ *
+ * 文字装饰（加粗 / 下划线 / 删除线）由 mui_text_draw_ex / mui_text_draw_cell_ex
+ * 的 flags 参数控制（见 MUI_TEXT_* 宏），不带 _ex 的旧函数等价于 flags = 0。
  */
 
 #ifndef MUI_FONT_H
@@ -42,6 +45,18 @@ typedef struct {
     int8_t base_line;             /**< 基线（从行底向上） */
 } mui_font_t;
 
+/* -------- 文字装饰标志（mui_text_*_ex 的 flags 位，可或组合） --------
+ * 加粗 = "软件加粗"（字形形态学膨胀，零资源、无需额外字库）；
+ *        字号越小笔画占比越大，越容易糊，≥16px 效果较好。
+ *        要更好的效果请用同族粗体字重另导一套字库，两者可叠加。
+ * 下划线 / 删除线 = 纯装饰线（直线，轴对齐，无需抗锯齿，不占 Flash），
+ *        画在整串宽度上，空格与字间间隙都连得上；
+ *        **颜色与字形同色（fg）**，没有独立的装饰线颜色 —— 换字色时它一起变。
+ */
+#define MUI_TEXT_BOLD        0x01   /**< 加粗：字形膨胀 1px（步进与包围盒不变） */
+#define MUI_TEXT_UNDERLINE   0x02   /**< 下划线：基线下方画线（可能落在行框外） */
+#define MUI_TEXT_STRIKE      0x04   /**< 删除线：行顶与基线中点画线（在行框内） */
+
 /**
  * @brief 绘制单个 LVGL 字体字符（8bpp alpha 混合，需纯色背景）
  * @param x      字符行框左上角 x
@@ -59,7 +74,7 @@ void mui_text_draw_char(int16_t x, int16_t y, char c, const mui_font_t *f,
  * @brief 绘制 LVGL 字体字符串
  * @param x      行框左上角 x
  * @param y      行框左上角 y
- * @param s      字符串（无字形时该字符跳过并按空格步进）
+ * @param s      字符串（字符无字形时跳过：不绘制、也不步进，即宽度按 0 计）
  * @param f      字体描述
  * @param fg     前景色
  * @param bg     背景色
@@ -67,6 +82,30 @@ void mui_text_draw_char(int16_t x, int16_t y, char c, const mui_font_t *f,
  */
 void mui_text_draw(int16_t x, int16_t y, const char *s, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 绘制字符串（带装饰：加粗 / 下划线 / 删除线）
+ *
+ * 与 mui_text_draw 逐像素等价（flags = 0 时同一份实现），差别只在 flags：
+ *   - MUI_TEXT_BOLD：字形按"取邻域最大值"膨胀 1px（左右各 1px，裁到字形框内），
+ *     步进宽度 adv_w 与字形成像范围都不变 → 串内位置与不加粗完全一致；
+ *     代价是 `alpha != 0` 的像素变多（写屏像素数增加）。
+ *   - MUI_TEXT_UNDERLINE：基线下方 1px（随 scale 放大、线宽 = scale）画一条
+ *     贯穿整串的直线，**可能落在行框外**（base_line 小的字体就是），需要的行数
+ *     用 mui_text_height 查询；控件擦除区域要按它算。
+ *   - MUI_TEXT_STRIKE：行顶与基线中点画线，始终落在行框内。
+ * 装饰线的颜色与字形同色（fg），无抗锯齿需求（轴对齐直线覆盖率恒为 1）。
+ * @param x      行框左上角 x
+ * @param y      行框左上角 y
+ * @param s      字符串
+ * @param f      字体描述
+ * @param fg     前景色（字形与装饰线）
+ * @param bg     背景色（alpha 混合用）
+ * @param scale  整数放大倍数
+ * @param flags  MUI_TEXT_* 位或，0 = 无装饰
+ */
+void mui_text_draw_ex(int16_t x, int16_t y, const char *s, const mui_font_t *f,
+                           uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags);
 
 /**
  * @brief 绘制单字符"整格覆盖"版（就地替换，无先擦后画 → 无闪烁）
@@ -94,16 +133,46 @@ void mui_text_draw_char_cell(int16_t x, int16_t y, char c,
  * @note  与 mui_text_draw 参数含义相同，差别仅在"就地覆盖、无擦白"
  */
 void mui_text_draw_cell(int16_t x, int16_t y, const char *s,
-                                const mui_font_t *f,
-                                uint16_t fg, uint16_t bg, int16_t scale);
+                               const mui_font_t *f,
+                               uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 绘制字符串"整格覆盖"版（带装饰：加粗 / 下划线 / 删除线）
+ *
+ * 每格覆盖矩形 = 步进宽 × mui_text_height(f, scale, flags)
+ * （含行框外的下划线行，故旧内容被就地替换、不会残留上一条装饰线），
+ * 装饰线与 mui_text_draw_ex 结果逐像素一致 —— 两条路径可自由互换。
+ * @note  参数含义与 mui_text_draw_ex 相同，差别仅在"就地覆盖、无擦白"
+ */
+void mui_text_draw_cell_ex(int16_t x, int16_t y, const char *s,
+                               const mui_font_t *f,
+                               uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags);
 
 /**
  * @brief 计算 LVGL 字体字符串宽度
+ *
+ * 字体是比例字体（每个字形自己的步进宽 `adv_w`，1/16 像素定点），所以：
+ *   宽度 = Σ(四舍五入到整像素的 adv_w) × scale，即"排版步进总宽"，
+ *   与下划线/删除线画出来的线宽完全一致（装饰线就铺这么宽）。
+ * 无字形的字符（含空格：本库字库不裁 U+0020）**不占宽度**；scale < 1 返回 0。
  * @param s      字符串
  * @param f      字体描述
  * @param scale  整数放大倍数
  * @return       宽度（像素）
  */
 int16_t mui_text_width(const char *s, const mui_font_t *f, int16_t scale);
+
+/**
+ * @brief 计算文字（含装饰）占用的纵向行数
+ *
+ * 与 mui_text_width 成对：无装饰时即 line_height * scale（行框高）；
+ * 带 MUI_TEXT_UNDERLINE 时下划线可能画在行框下方，返回值取到包括它
+ * （删除线在行框内，不改变结果）。控件/调用方按它分配擦除或重绘范围。
+ * @param f      字体描述（NULL 返回 0）
+ * @param scale  整数放大倍数（< 1 返回 0）
+ * @param flags  MUI_TEXT_* 位或，0 = 只算行框
+ * @return       从行框顶部起需要覆盖的行数（像素）
+ */
+int16_t mui_text_height(const mui_font_t *f, int16_t scale, uint8_t flags);
 
 #endif /* MUI_FONT_H */

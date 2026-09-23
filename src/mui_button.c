@@ -103,6 +103,11 @@ void mui_button_set_font(mui_button_t *btn, const mui_font_t *font)
     if (btn) { btn->font = font; }
 }
 
+void mui_button_set_style(mui_button_t *btn, const mui_button_style_t *style)
+{
+    if (btn) { btn->style = style; }   /* NULL 在 draw 时 fallback 默认 */
+}
+
 void mui_button_set_pos(mui_button_t *btn, int16_t x, int16_t y)
 {
     if (btn) { btn->x = x; btn->y = y; }

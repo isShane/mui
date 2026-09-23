@@ -9,6 +9,7 @@
 #include "mui.h"
 #include "mui_font.h"
 #include "mui_label.h"
+#include "mui_button.h"
 #include "mui_progressbar.h"
 #include "sim_helper.h"
 
@@ -457,6 +458,462 @@ static void test_label_exact_span(void)
     mui_label_set_text(&lbl, "121");
     CHECK(px(sx, 43) == MUI_GREEN, "精确模式未重画前缀字符");
 #endif
+}
+
+/* -------- 测试：文字装饰（加粗 / 下划线 / 删除线） -------- */
+
+/** @brief base_line = 0 的测试字体：下划线会落到行框外，专门覆盖那条分支 */
+static const mui_font_t lv_base0_font = {
+    lv_test_bitmap, lv_test_glyphs, lv_test_cmap, 1, 0, 0, 8, 0
+};
+
+/**
+ * @brief 测试：flags = 0 必须与无装饰旧 API 逐像素一致（零行为变化）
+ */
+static void test_text_flags_zero(void)
+{
+    const int16_t x = 30;
+    const int16_t y = 40;
+
+    /* 稀疏绘制版 */
+    mui_screen_clear(TEST_BG);
+    mui_text_draw(x, y, "123", &lv_test_font, MUI_BLACK, TEST_BG, 1);
+    mui_screen_flush();
+    memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_ex(x, y, "123", &lv_test_font, MUI_BLACK, TEST_BG, 1, 0);
+    check_fb_equal("flags=0 与 mui_text_draw 不一致");
+
+    /* 整格覆盖版 */
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_cell(x, y, "123", &lv_test_font, MUI_BLACK, TEST_BG, 1);
+    mui_screen_flush();
+    memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_cell_ex(x, y, "123", &lv_test_font, MUI_BLACK, TEST_BG, 1, 0);
+    check_fb_equal("flags=0 与 mui_text_draw_cell 不一致");
+
+    /* 空指针 / 非法 scale：不崩不画 */
+    mui_text_draw_ex(x, y, "123", NULL, MUI_BLACK, TEST_BG, 1, MUI_TEXT_BOLD);
+    mui_text_draw_ex(x, y, NULL, &lv_test_font, MUI_BLACK, TEST_BG, 1, MUI_TEXT_BOLD);
+    mui_text_draw_ex(x, y, "123", &lv_test_font, MUI_BLACK, TEST_BG, 0, MUI_TEXT_BOLD);
+    mui_text_draw_cell_ex(x, y, "123", NULL, MUI_BLACK, TEST_BG, 1, MUI_TEXT_UNDERLINE);
+    mui_text_draw_cell_ex(x, y, NULL, &lv_test_font, MUI_BLACK, TEST_BG, 1, MUI_TEXT_UNDERLINE);
+    CHECK(mui_text_height(NULL, 1, MUI_TEXT_UNDERLINE) == 0, "字体为 NULL 时高度应为 0");
+    CHECK(mui_text_height(&lv_test_font, 0, MUI_TEXT_UNDERLINE) == 0, "scale=0 时高度应为 0");
+    CHECK(mui_text_height(&lv_test_font, 1, 0) == lv_test_font.line_height,
+          "无装饰高度应等于行框高");
+}
+
+/**
+ * @brief 测试：加粗 = 形态学膨胀 —— 只加墨不减墨、不外扩出字形框、步进不变
+ */
+static void test_text_bold(void)
+{
+    const int16_t x = 30;
+    const int16_t y = 40;
+    const mui_font_t *f = &lv_mono_font;          /* 3x5 字形，box 3x5，adv 4px */
+    const mui_glyph_dsc_t *g = &lv_mono_glyphs[0];/* '1' */
+    const int16_t gx = (int16_t)(x + g->ofs_x);
+    const int16_t gy = (int16_t)(y + (f->line_height - f->base_line
+                                      - g->box_h - g->ofs_y));
+    int ink_plain = 0;
+    int ink_bold = 0;
+    int16_t row, col;
+
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_ex(x, y, "1", f, MUI_BLACK, TEST_BG, 1, 0);
+    mui_screen_flush();
+    memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_ex(x, y, "1", f, MUI_BLACK, TEST_BG, 1, MUI_TEXT_BOLD);
+
+    for (row = 0; row < g->box_h; row++) {
+        for (col = -1; col <= g->box_w; col++) {
+            int16_t cx = (int16_t)(gx + col);
+            int16_t cy = (int16_t)(gy + row);
+            uint16_t want = (col >= 0 && col < g->box_w)
+                            ? label_expect[cy * SIM_W + cx] : TEST_BG;
+            uint16_t got = px(cx, cy);
+
+            if (want == MUI_BLACK) {
+                ink_plain++;
+                CHECK(got == MUI_BLACK, "加粗后原墨迹丢失");
+            }
+            if (got == MUI_BLACK) {
+                ink_bold++;
+            }
+            if (col < 0 || col >= g->box_w) {
+                /* 膨胀被裁到字形框内：框外一圈不允许出现新墨 */
+                CHECK(got == TEST_BG, "加粗外扩出字形框");
+            }
+        }
+    }
+    CHECK(ink_bold > ink_plain, "加粗后墨迹像素数应增加");
+    CHECK(ink_plain > 0, "参考字形应有墨（测试前提）");
+
+    /* 步进不变：加粗的 "11" == 两次单字加粗（第二字起于 x + 步进） */
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_ex(x, y, "11", f, MUI_BLACK, TEST_BG, 1, MUI_TEXT_BOLD);
+    mui_screen_flush();
+    memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_ex(x, y, "1", f, MUI_BLACK, TEST_BG, 1, MUI_TEXT_BOLD);
+    mui_text_draw_ex((int16_t)(x + 4), y, "1", f, MUI_BLACK, TEST_BG, 1, MUI_TEXT_BOLD);
+    check_fb_equal("加粗改变了步进宽度（第二字起点漂移）");
+}
+
+/**
+ * @brief 逐像素比对：除指定行区间外，其余像素必须与参考帧完全一致
+ * @param row0 允许不同的起始行（含）
+ * @param row1 允许不同的结束行（含）
+ * @param msg  断言失败时的描述
+ */
+static void check_fb_equal_except_rows(int16_t row0, int16_t row1, const char *msg)
+{
+    int32_t diff = 0;
+    int x, y;
+
+    mui_screen_flush();   /* 缓冲后端：比对前先推屏 */
+    for (y = 0; y < SIM_H; y++) {
+        if (y >= row0 && y <= row1) {
+            continue;
+        }
+        for (x = 0; x < SIM_W; x++) {
+            if (sim_get_fb()[y * SIM_W + x] != label_expect[y * SIM_W + x]) {
+                diff++;
+            }
+        }
+    }
+    if (diff != 0) {
+        printf("[FAIL] %s（区间外不一致像素 %d，line %d）\n", msg, (int)diff, __LINE__);
+        test_failed++;
+    }
+}
+
+/**
+ * @brief 测试：下划线 / 删除线的位置、宽度与覆盖行数
+ * @note  位置口径（与实现同源的"排版意图"）：基线 = 行框顶 + (line_height - base_line)，
+ *        下划线在基线下方 1px（随 scale 放大），删除线在行框顶与基线的中点。
+ *        除装饰线所在行外，画面必须与无装饰时逐像素一致（证明没有多画/少画别的行）。
+ */
+static void test_text_decor_lines(void)
+{
+    static const struct {
+        const mui_font_t *f;
+        const char *name;
+    } fonts[] = {
+        {&lv_test_font,  "base_line=2"},
+        {&lv_base0_font, "base_line=0"},
+    };
+    const int16_t x = 30;
+    const int16_t y = 40;
+    size_t i;
+
+    for (i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
+        const mui_font_t *f = fonts[i].f;
+        int16_t base = (int16_t)(f->line_height - f->base_line);
+        int16_t w = mui_text_width("123", f, 1);
+        int16_t uy = (int16_t)(y + base + 1);        /* 下划线：基线下方 1px */
+        int16_t sy = (int16_t)(y + base / 2);        /* 删除线：行顶与基线中点 */
+        int16_t h_ul = mui_text_height(f, 1, MUI_TEXT_UNDERLINE);
+        int16_t c;
+
+        CHECK(h_ul >= (int16_t)(uy - y + 1), "装饰高度应含下划线那一行");
+        CHECK(h_ul >= f->line_height, "装饰高度不应小于行框高");
+        CHECK(mui_text_height(f, 1, MUI_TEXT_STRIKE) == f->line_height,
+              "删除线在行框内，不改变高度");
+
+        /* 参考帧：同字体、同位置、无装饰 */
+        mui_screen_clear(TEST_BG);
+        mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 1, 0);
+        mui_screen_flush();
+        memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+        /* 只开下划线：整串一条连续线，两端各多 1px 无墨，线宽 1，其它行不变 */
+        mui_screen_clear(TEST_BG);
+        mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 1, MUI_TEXT_UNDERLINE);
+        for (c = 0; c < w; c++) {
+            CHECK(px((int16_t)(x + c), uy) == MUI_BLACK, "下划线不连续");
+        }
+        CHECK(px((int16_t)(x - 1), uy) == TEST_BG, "下划线左端越界");
+        CHECK(px((int16_t)(x + w), uy) == TEST_BG, "下划线右端越界");
+        CHECK(px(x, (int16_t)(uy + 1)) == TEST_BG, "下划线过宽（线宽应为 1）");
+        check_fb_equal_except_rows(uy, uy, "只开下划线时有别的行被改动");
+
+        /* 只开删除线：在行框内，其它行不变（含下划线那一行） */
+        mui_screen_clear(TEST_BG);
+        mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 1, MUI_TEXT_STRIKE);
+        for (c = 0; c < w; c++) {
+            CHECK(px((int16_t)(x + c), sy) == MUI_BLACK, "删除线不连续");
+        }
+        CHECK(sy < (int16_t)(y + f->line_height), "删除线应落在行框内");
+        check_fb_equal_except_rows(sy, sy, "只开删除线时有别的行被改动");
+
+        /* 两者同时开：两条线都在，且只改动这两行 */
+        mui_screen_clear(TEST_BG);
+        mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 1,
+                         (uint8_t)(MUI_TEXT_UNDERLINE | MUI_TEXT_STRIKE));
+        CHECK(px(x, uy) == MUI_BLACK, "下划线+删除线：下划线缺失");
+        CHECK(px(x, sy) == MUI_BLACK, "下划线+删除线：删除线缺失");
+        check_fb_equal_except_rows((int16_t)(sy < uy ? sy : uy),
+                                   (int16_t)(sy < uy ? uy : sy),
+                                   "两条装饰线同时开时改动了其它行");
+
+        /* scale = 2：位置按 scale 放大、线宽 = scale */
+        {
+            int16_t uy2 = (int16_t)(y + base * 2 + 2);
+            int16_t h2 = mui_text_height(f, 2, MUI_TEXT_UNDERLINE);
+
+            CHECK(h2 >= (int16_t)(uy2 - y + 2), "scale=2 时下划线超出覆盖行数");
+            mui_screen_clear(TEST_BG);
+            mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 2, MUI_TEXT_UNDERLINE);
+            CHECK(px(x, uy2) == MUI_BLACK, "scale=2 下划线首行缺失");
+            CHECK(px(x, (int16_t)(uy2 + 1)) == MUI_BLACK, "scale=2 下划线应为 2px");
+            CHECK(px(x, (int16_t)(uy2 + 2)) == TEST_BG, "scale=2 下划线过宽");
+
+            /* 与 scale=2 无装饰帧比对（只有那两行允许不同） */
+            mui_screen_clear(TEST_BG);
+            mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 2, 0);
+            mui_screen_flush();
+            memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+            mui_screen_clear(TEST_BG);
+            mui_text_draw_ex(x, y, "123", f, MUI_BLACK, TEST_BG, 2, MUI_TEXT_UNDERLINE);
+            check_fb_equal_except_rows(uy2, (int16_t)(uy2 + 1),
+                                       "scale=2 下划线改动了别的行");
+        }
+    }
+}
+
+/**
+ * @brief 测试：整格覆盖版与稀疏版在带装饰时逐像素一致（两条路径可互换）
+ */
+static void test_text_cell_matches_sparse(void)
+{
+    static const uint8_t decors[] = {
+        MUI_TEXT_BOLD,
+        MUI_TEXT_UNDERLINE,
+        MUI_TEXT_STRIKE,
+        (uint8_t)(MUI_TEXT_BOLD | MUI_TEXT_UNDERLINE | MUI_TEXT_STRIKE),
+    };
+    static const struct {
+        const mui_font_t *f;
+        const char *name;
+    } fonts[] = {
+        {&lv_mono_font,  "等宽"},
+        {&lv_base0_font, "base_line=0"},
+    };
+    static const int16_t scales[] = {1, 2};
+    const int16_t x = 30;
+    const int16_t y = 40;
+    char msg[96];
+    size_t i, j, k;
+
+    for (i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
+        for (j = 0; j < sizeof(decors) / sizeof(decors[0]); j++) {
+            for (k = 0; k < sizeof(scales) / sizeof(scales[0]); k++) {
+                mui_screen_clear(TEST_BG);
+                mui_text_draw_ex(x, y, "12", fonts[i].f, MUI_BLACK, TEST_BG,
+                                 scales[k], decors[j]);
+                mui_screen_flush();
+                memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+                mui_screen_clear(TEST_BG);
+                mui_text_draw_cell_ex(x, y, "12", fonts[i].f, MUI_BLACK, TEST_BG,
+                                      scales[k], decors[j]);
+
+                sprintf(msg, "整格覆盖与稀疏绘制不一致（%s decor=%d scale=%d）",
+                        fonts[i].name, (int)decors[j], (int)scales[k]);
+                check_fb_equal(msg);
+            }
+        }
+    }
+}
+
+/**
+ * @brief 测试：标签带装饰时的增量更新必须与整串重绘一致
+ * @note  scale=2 覆盖"整格覆盖行数 = line_height * scale"（含行框外的下划线行）
+ */
+static void label_decor_run(const mui_font_t *font, uint8_t decor, int16_t scale,
+                            const char *who)
+{
+    static const char *cases[][2] = {
+        {"123", "121"},
+        {"123", "333"},
+        {"113", "121"},
+        {"1",   "123"},
+        {"123", "1"},
+    };
+    const int16_t x = 40;
+    const int16_t y = 40;
+    mui_label_t lbl;
+    mui_label_t ref;
+    char msg[96];
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        /* 参考：干净背景上一次性绘制最终文本 */
+        mui_screen_clear(TEST_BG);
+        mui_label_init(&ref, x, y, font, MUI_BLACK, TEST_BG, scale);
+        mui_label_set_decor(&ref, decor);
+        mui_label_set_text(&ref, cases[i][1]);
+        mui_screen_flush();
+        memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+        /* 实际：先画初值，再增量更新到最终文本 */
+        mui_screen_clear(TEST_BG);
+        mui_label_init(&lbl, x, y, font, MUI_BLACK, TEST_BG, scale);
+        mui_label_set_decor(&lbl, decor);
+        mui_label_set_text(&lbl, cases[i][0]);
+        mui_label_set_text(&lbl, cases[i][1]);
+
+        sprintf(msg, "label %s decor=%d scale=%d 用例%d 增量与整串不一致",
+                who, (int)decor, (int)scale, (int)i);
+        check_fb_equal(msg);
+    }
+}
+
+/**
+ * @brief 测试：标签装饰相关
+ */
+static void test_label_decor(void)
+{
+    const int16_t x = 40;
+    const int16_t y = 40;
+    mui_label_t lbl;
+    mui_label_t ref;
+
+    /* 各装饰 × 两种字体（命中整格覆盖 / 精确增量两条路径）× 两种放大倍数 */
+    label_decor_run(&lv_mono_font, 0, 1, "无装饰");
+    label_decor_run(&lv_mono_font, MUI_TEXT_BOLD, 1, "加粗");
+    label_decor_run(&lv_mono_font, MUI_TEXT_UNDERLINE, 1, "下划线");
+    label_decor_run(&lv_mono_font, MUI_TEXT_STRIKE, 1, "删除线");
+    label_decor_run(&lv_mono_font,
+                    (uint8_t)(MUI_TEXT_BOLD | MUI_TEXT_UNDERLINE | MUI_TEXT_STRIKE), 2,
+                    "全装饰");
+    label_decor_run(&lv_test_font, MUI_TEXT_UNDERLINE, 1, "下划线");
+    label_decor_run(&lv_base0_font, MUI_TEXT_UNDERLINE, 1, "下划线(行框外)");
+    label_decor_run(&lv_base0_font, MUI_TEXT_UNDERLINE, 2, "下划线(行框外)");
+
+    /* 先带下划线画，再关掉：旧装饰线必须被擦除（行框外那条尤其容易残留） */
+    mui_screen_clear(TEST_BG);
+    mui_label_init(&ref, x, y, &lv_base0_font, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_text(&ref, "123");
+    mui_screen_flush();
+    memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+    mui_screen_clear(TEST_BG);
+    mui_label_init(&lbl, x, y, &lv_base0_font, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_decor(&lbl, MUI_TEXT_UNDERLINE);
+    mui_label_set_text(&lbl, "123");
+    mui_label_set_decor(&lbl, 0);
+    check_fb_equal("关闭下划线后旧装饰线未擦除");
+
+    /* 装饰未变化时不应重绘（与 set_text 的"文本未变不擦不画"一致） */
+    mui_screen_clear(TEST_BG);
+    mui_label_init(&lbl, x, y, &lv_mono_font, MUI_BLACK, TEST_BG, 1);
+    mui_label_set_text(&lbl, "123");
+    mui_pixel_draw((int16_t)(x + 13), 43, MUI_GREEN);
+    mui_label_set_decor(&lbl, 0);
+    CHECK(px((int16_t)(x + 13), 43) == MUI_GREEN, "装饰未变化时不应重绘");
+}
+
+/**
+ * @brief 测试：改色 setter —— 结果必须与"直接以新色绘制"一致，装饰线跟着一起变
+ * @note  set_fg 不动几何（同字形重画即覆盖旧墨）→ 可与"新色首绘"做全屏逐像素比对；
+ *        set_colors 会换底色（擦除用新 bg），故只断言"覆盖区内不再有旧色 + 覆盖区外不动"。
+ */
+static void test_label_colors(void)
+{
+    static const mui_font_t *fonts[] = {&lv_mono_font, &lv_base0_font};
+    static const uint8_t decors[] = {
+        0,
+        MUI_TEXT_UNDERLINE,
+        (uint8_t)(MUI_TEXT_BOLD | MUI_TEXT_UNDERLINE | MUI_TEXT_STRIKE),
+    };
+    const uint16_t fg_new = MUI_RED;
+    const uint16_t bg_new = MUI_LIGHTGREY;
+    const int16_t x = 40;
+    const int16_t y = 40;
+    mui_label_t lbl;
+    mui_label_t ref;
+    char msg[96];
+    size_t i, j;
+
+    for (i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
+        for (j = 0; j < sizeof(decors) / sizeof(decors[0]); j++) {
+            int16_t w, h, row, col;
+
+            /* ---- 参考：干净底色上直接以新色首绘 ---- */
+            mui_screen_clear(TEST_BG);
+            mui_label_init(&ref, x, y, fonts[i], fg_new, TEST_BG, 1);
+            mui_label_set_decor(&ref, decors[j]);
+            mui_label_set_text(&ref, "123");
+            mui_screen_flush();
+            memcpy(label_expect, sim_get_fb(), sizeof(label_expect));
+
+            /* ---- 实际：旧色画好后 set_fg 换色（不擦除，靠同位置重画覆盖） ---- */
+            mui_screen_clear(TEST_BG);
+            mui_label_init(&lbl, x, y, fonts[i], MUI_BLACK, TEST_BG, 1);
+            mui_label_set_decor(&lbl, decors[j]);
+            mui_label_set_text(&lbl, "123");
+            mui_label_set_fg(&lbl, fg_new);
+
+            sprintf(msg, "set_fg 后与直接以新色绘制不一致（font%u decor=%d）",
+                    (unsigned)i, (int)decors[j]);
+            check_fb_equal(msg);
+
+            /* ---- set_colors：底色也换 ---- */
+            mui_screen_clear(TEST_BG);
+            mui_label_init(&lbl, x, y, fonts[i], MUI_BLACK, TEST_BG, 1);
+            mui_label_set_decor(&lbl, decors[j]);
+            mui_label_set_text(&lbl, "123");
+            w = lbl.last_w;
+            h = lbl.last_h;
+            mui_label_set_colors(&lbl, fg_new, bg_new);
+
+            /* 覆盖区内只允许出现新底色与新字色（旧底色/旧字色说明擦除或重画漏了） */
+            for (row = (int16_t)(y - 2); row < (int16_t)(y + h + 2); row++) {
+                for (col = (int16_t)(x - 2); col < (int16_t)(x + w + 2); col++) {
+                    uint16_t c = px(col, row);
+                    CHECK(c == bg_new || c == fg_new, "set_colors 后覆盖区内残留旧色");
+                }
+            }
+            /* 覆盖区外不被触碰 */
+            CHECK(px((int16_t)(x - 4), (int16_t)(y - 4)) == TEST_BG,
+                  "set_colors 越界修改了覆盖区外");
+            CHECK(px((int16_t)(x + w + 3), (int16_t)(y + h + 3)) == TEST_BG,
+                  "set_colors 越界修改了覆盖区外");
+
+            /* 装饰线必须跟着字色一起变（用的是同一个 fg） */
+            if (decors[j] & MUI_TEXT_UNDERLINE) {
+                int16_t uy = (int16_t)(y + fonts[i]->line_height
+                                       - fonts[i]->base_line + 1);
+                for (col = 0; col < w; col++) {
+                    CHECK(px((int16_t)(x + col), uy) == fg_new, "下划线没跟着字色变");
+                }
+            }
+        }
+
+        /* ---- 颜色未变：不重绘（哨兵像素不被触碰） ---- */
+        mui_screen_clear(TEST_BG);
+        mui_label_init(&lbl, x, y, fonts[i], MUI_BLACK, TEST_BG, 1);
+        mui_label_set_text(&lbl, "1");
+        mui_pixel_draw((int16_t)(x + 13), 43, MUI_GREEN);
+        mui_label_set_fg(&lbl, MUI_BLACK);
+        mui_label_set_colors(&lbl, MUI_BLACK, TEST_BG);
+        CHECK(px((int16_t)(x + 13), 43) == MUI_GREEN, "颜色未变时不应重绘");
+    }
+
+    /* 空指针安全 */
+    mui_label_set_fg(NULL, MUI_RED);
+    mui_label_set_colors(NULL, MUI_RED, MUI_BLACK);
+    mui_button_set_style(NULL, NULL);
 }
 
 /* -------- 测试：抗锯齿圆角矩形 -------- */
@@ -1072,6 +1529,12 @@ int main(void)
     test_label_diff();
     test_label_span();
     test_label_exact_span();
+    test_text_flags_zero();
+    test_text_bold();
+    test_text_decor_lines();
+    test_text_cell_matches_sparse();
+    test_label_decor();
+    test_label_colors();
     test_round_rect_aa();
     test_round_rect_aa_bg();
     test_round_rect_draw_aa();

@@ -89,6 +89,17 @@ void mui_button_set_icon(mui_button_t *btn, const mui_image_mask_t *icon);
 /** @brief 设置文字字体（NULL 则不画文字） */
 void mui_button_set_font(mui_button_t *btn, const mui_font_t *font);
 
+/**
+ * @brief 换配色样式（NULL 恢复默认 mui_button_style_default）
+ *
+ * 按钮的颜色（含文字色 fg）全部由样式决定，**没有逐色 setter** ——
+ * 要单独给某个按钮换色，就另定义一份 style 再切过来，避免"两个真值来源"。
+ * 本函数只改状态，改完由调用者决定何时 mui_button_draw（与其它 set_* 一致）。
+ * @param btn   按钮对象
+ * @param style 新样式（可为 NULL）
+ */
+void mui_button_set_style(mui_button_t *btn, const mui_button_style_t *style);
+
 /** @brief 移动按钮位置 */
 void mui_button_set_pos(mui_button_t *btn, int16_t x, int16_t y);
 

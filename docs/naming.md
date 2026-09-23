@@ -11,8 +11,9 @@ mui_<对象>_<动作>[_<修饰>]
 ```
 
 - **对象**：被操作的东西（名词，尽量短、具体）
-- **动作**：`init` / `draw` / `fill` / `set` / `get` / `clear` / `poll` / `mix` / `contains`
-- **修饰**（可选）：`_aa`（抗锯齿）/ `_cell`（整格覆盖）/ `_key`（色键）/ `_mask`（蒙版）
+- **动作**：`init` / `draw` / `fill` / `set` / `get` / `clear` / `poll` / `mix` / `contains` / `width` / `height`
+- **修饰**（可选）：`_aa`（抗锯齿）/ `_cell`（整格覆盖）/ `_key`（色键）/ `_mask`（蒙版）/
+  `_ex`（扩展版：比同名函数**多一个 flags 参数**，如 `mui_text_draw_ex`）
 
 **为什么选 A**：控件层（`mui_button_init` / `mui_button_draw` / `mui_label_set_text`）已经是这套，
 图元层（`mui_fill_rect` / `mui_draw_circle`）是另一套；让图元对齐控件，改动面更小、且对象相同的函数在
@@ -108,6 +109,8 @@ mui_<对象>_<动作>[_<修饰>]
 | `mui_lv_font_draw_text_cell` | `mui_text_draw_cell` | |
 | `mui_font_draw_char` / `mui_font_draw_text` / `mui_font_text_width` | **整体删除** | 5x7 点阵字体退场，只保留 LVGL 转换字体 |
 | 形参 `spacing`（5x7 字距） | **删除** | 新字体按 `adv_w` 步进，无需外部字距 |
+| ——（新增能力，2026-09-22 已实现） | `mui_text_draw_ex` / `mui_text_draw_cell_ex`（带 `flags`，`MUI_TEXT_BOLD` / `_UNDERLINE` / `_STRIKE`） | `_ex` = 多一个 flags 参数；旧函数保留为 flags = 0 的封装 |
+| ——（新增能力，2026-09-22 已实现） | `mui_text_height(f, scale, flags)` | 与 `mui_text_width` 成对：**含装饰**的纵向行数（下划线可能超出行框） |
 
 ### 2.6 控件
 
@@ -142,6 +145,7 @@ mui_<对象>_<动作>[_<修饰>]
 | 字体指针类型 | `void *font` 收紧为 `const mui_font_t *font`；`mui_button.h` / `mui_label.h` 因此 include `mui_font.h` |
 | 命中测试 | `mui_hit(px,py,x,y,w,h)` → `mui_rect_contains(x,y,w,h,px,py)`（参数顺序也调成"先矩形后点"） |
 | 缩写宏 | `MUI_BTN_*` → `MUI_BUTTON_*`；`MUI_PB_*` → `MUI_PROGRESSBAR_*` |
+| 文字装饰（当日追加） | 加粗/下划线/删除线做成 **flags 参数**（`mui_text_draw_ex` / `mui_label_set_decor`），不扩函数名后缀 —— 三个标志可自由组合，做成后缀会变成 8 个函数 |
 
 执行方式：先脚本化做全量符号替换（420 处 / 32 个文件，覆盖源码、注释、文档、生成脚本），
 再逐个删除上面两块废弃 API，最后收紧类型与修正调用点。

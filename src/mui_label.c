@@ -28,7 +28,7 @@ static void label_measure(const mui_label_t *lbl, const char *s,
         return;
     }
     *w = mui_text_width(s, lbl->font, lbl->scale);
-    *h = (int16_t)(lbl->font->line_height * lbl->scale);
+    *h = mui_text_height(lbl->font, lbl->scale, lbl->decor);   /* 含行框外的下划线行 */
 }
 
 /**
@@ -42,7 +42,7 @@ static void label_paint_at(const mui_label_t *lbl, int16_t x, const char *s)
     if (lbl->font == NULL) {
         return;
     }
-    mui_text_draw(x, lbl->y, s, lbl->font, lbl->fg, lbl->bg, lbl->scale);
+    mui_text_draw_ex(x, lbl->y, s, lbl->font, lbl->fg, lbl->bg, lbl->scale, lbl->decor);
 }
 
 /**
@@ -101,6 +101,7 @@ void mui_label_init(mui_label_t *lbl, int16_t x, int16_t y,
     lbl->last_w = 0;
     lbl->last_h = 0;
     lbl->drawn = 0;
+    lbl->decor = 0;
 }
 
 void mui_label_set_text(mui_label_t *lbl, const char *text)
@@ -177,9 +178,9 @@ void mui_label_set_text(mui_label_t *lbl, const char *text)
 #if MUI_LABEL_OPA_COVER
     /* -------- 覆盖式快路径：等长同宽文本整格就地替换（无擦白阶段 → 不闪烁） -------- */
     if (old_len == new_len && lbl->last_w == new_w) {
-        mui_text_draw_cell((int16_t)(lbl->x + left_x), lbl->y,
-                           lbl->buf + left, lbl->font,
-                           lbl->fg, lbl->bg, lbl->scale);
+        mui_text_draw_cell_ex((int16_t)(lbl->x + left_x), lbl->y,
+                              lbl->buf + left, lbl->font,
+                              lbl->fg, lbl->bg, lbl->scale, lbl->decor);
         lbl->last_w = new_w;
         lbl->last_h = new_h;
         return;
@@ -208,6 +209,49 @@ void mui_label_set_text(mui_label_t *lbl, const char *text)
 
     lbl->last_w = new_w;
     lbl->last_h = new_h;
+}
+
+void mui_label_set_decor(mui_label_t *lbl, uint8_t decor)
+{
+    if (lbl == NULL || lbl->decor == decor) {
+        return;
+    }
+
+    lbl->decor = decor;
+    if (!lbl->drawn) {
+        return;                       /* 还没画过：下次首绘即生效 */
+    }
+
+    /* 装饰线会改变行框内/外的像素 → 整串擦旧画新
+     * （erase 的 2px 外扩 + last_h 已含下划线行，范围足够） */
+    label_erase(lbl);
+    label_paint(lbl);
+}
+
+void mui_label_set_fg(mui_label_t *lbl, uint16_t fg)
+{
+    if (lbl == NULL || lbl->fg == fg) {
+        return;
+    }
+
+    lbl->fg = fg;
+    if (lbl->drawn) {
+        label_paint(lbl);     /* 字形几何不变：新墨覆盖旧墨，不必先擦 */
+    }
+}
+
+void mui_label_set_colors(mui_label_t *lbl, uint16_t fg, uint16_t bg)
+{
+    if (lbl == NULL || (lbl->fg == fg && lbl->bg == bg)) {
+        return;
+    }
+
+    lbl->fg = fg;
+    lbl->bg = bg;
+    if (lbl->drawn) {
+        label_erase(lbl);     /* 用新 bg 把旧区域铺回底色 */
+        label_paint(lbl);
+    }
 }
 
 void mui_label_set_pos(mui_label_t *lbl, int16_t x, int16_t y)
