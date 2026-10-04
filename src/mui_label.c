@@ -46,11 +46,33 @@ static void label_paint_at(const mui_label_t *lbl, int16_t x, const char *s)
 }
 
 /**
+ * @brief 内部：是否处于"对齐模式"（非左对齐且有有效参考宽度）
+ */
+static uint8_t label_aligned(const mui_label_t *lbl)
+{
+    return (uint8_t)((lbl->align != MUI_ALIGN_LEFT && lbl->w > 0) ? 1 : 0);
+}
+
+/**
+ * @brief 内部：文本起始 x（左对齐即 lbl->x；对齐模式按参考框求起点）
+ */
+static int16_t label_origin_x(const mui_label_t *lbl)
+{
+    int16_t tw;
+
+    if (!label_aligned(lbl) || lbl->font == NULL) {
+        return lbl->x;
+    }
+    tw = mui_text_width(lbl->buf, lbl->font, lbl->scale);
+    return mui_text_align_x(lbl->x, lbl->w, tw, lbl->align);
+}
+
+/**
  * @brief 内部：绘制整串文本
  */
 static void label_paint(const mui_label_t *lbl)
 {
-    label_paint_at(lbl, lbl->x, lbl->buf);
+    label_paint_at(lbl, label_origin_x(lbl), lbl->buf);
 }
 
 /**
@@ -83,6 +105,13 @@ static int16_t label_prefix_width(const mui_label_t *lbl, const char *s, int16_t
  */
 static void label_erase(const mui_label_t *lbl)
 {
+    if (label_aligned(lbl)) {
+        /* 对齐模式：内容可能落在参考框内任意位置 → 整框擦除 */
+        mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
+                      (int16_t)(lbl->w + 4), (int16_t)(lbl->last_h + 4),
+                      lbl->bg);
+        return;
+    }
     mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
                   (int16_t)(lbl->last_w + 4), (int16_t)(lbl->last_h + 4),
                   lbl->bg);
@@ -102,6 +131,8 @@ void mui_label_init(mui_label_t *lbl, int16_t x, int16_t y,
     lbl->last_h = 0;
     lbl->drawn = 0;
     lbl->decor = 0;
+    lbl->w = 0;
+    lbl->align = MUI_ALIGN_LEFT;
 }
 
 void mui_label_set_text(mui_label_t *lbl, const char *text)
@@ -153,12 +184,29 @@ void mui_label_set_text(mui_label_t *lbl, const char *text)
 
     label_measure(lbl, lbl->buf, &new_w, &new_h);
 
+#if MUI_CFG_IS_STRIP
+    /* 条带后端：set_* 只记状态（帧外写屏会污染条带缓冲），整串重画交给 mui_label_draw */
+    lbl->last_w = new_w;
+    lbl->last_h = new_h;
+    lbl->drawn = 1;
+    return;
+#endif
+
     /* -------- 首次绘制：整串直接画 -------- */
     if (!lbl->drawn) {
         label_paint(lbl);
         lbl->last_w = new_w;
         lbl->last_h = new_h;
         lbl->drawn = 1;
+        return;
+    }
+
+    /* -------- 对齐模式：起点随文本宽度变化，整框擦除 + 整串重画 -------- */
+    if (label_aligned(lbl)) {
+        label_erase(lbl);
+        label_paint(lbl);
+        lbl->last_w = new_w;
+        lbl->last_h = new_h;
         return;
     }
 
@@ -218,6 +266,10 @@ void mui_label_set_decor(mui_label_t *lbl, uint8_t decor)
     }
 
     lbl->decor = decor;
+#if MUI_CFG_IS_STRIP
+    lbl->drawn = 1;               /* 条带后端：只改状态，重画交给 mui_label_draw */
+    return;
+#endif
     if (!lbl->drawn) {
         return;                       /* 还没画过：下次首绘即生效 */
     }
@@ -235,6 +287,9 @@ void mui_label_set_fg(mui_label_t *lbl, uint16_t fg)
     }
 
     lbl->fg = fg;
+#if MUI_CFG_IS_STRIP
+    return;                       /* 条带后端：只改状态，重画交给 mui_label_draw */
+#endif
     if (lbl->drawn) {
         label_paint(lbl);     /* 字形几何不变：新墨覆盖旧墨，不必先擦 */
     }
@@ -248,6 +303,9 @@ void mui_label_set_colors(mui_label_t *lbl, uint16_t fg, uint16_t bg)
 
     lbl->fg = fg;
     lbl->bg = bg;
+#if MUI_CFG_IS_STRIP
+    return;                       /* 条带后端：只改状态，重画交给 mui_label_draw */
+#endif
     if (lbl->drawn) {
         label_erase(lbl);     /* 用新 bg 把旧区域铺回底色 */
         label_paint(lbl);
@@ -256,6 +314,14 @@ void mui_label_set_colors(mui_label_t *lbl, uint16_t fg, uint16_t bg)
 
 void mui_label_set_pos(mui_label_t *lbl, int16_t x, int16_t y)
 {
+#if MUI_CFG_IS_STRIP
+    if (lbl == NULL) {
+        return;
+    }
+    lbl->x = x;                   /* 条带后端：只改状态，重画交给 mui_label_draw */
+    lbl->y = y;
+    return;
+#else
     if (lbl == NULL || !lbl->drawn) {
         return;
     }
@@ -264,12 +330,41 @@ void mui_label_set_pos(mui_label_t *lbl, int16_t x, int16_t y)
     lbl->x = x;
     lbl->y = y;
     label_paint(lbl);
+#endif
 }
 
 void mui_label_draw(const mui_label_t *lbl)
 {
+#if MUI_CFG_IS_STRIP
+    /* 条带后端每帧按带重放：底色已由本遍绘制铺好，整串直接画即可（无需擦旧） */
+    if (lbl == NULL || lbl->font == NULL) {
+        return;
+    }
+    label_paint(lbl);
+#else
     if (lbl == NULL || !lbl->drawn) {
         return;
     }
     label_paint(lbl);
+#endif
+}
+
+void mui_label_set_align(mui_label_t *lbl, uint8_t align, int16_t w)
+{
+    if (lbl == NULL || (lbl->align == align && lbl->w == w)) {
+        return;
+    }
+#if MUI_CFG_IS_STRIP
+    lbl->align = align;          /* 条带后端：只改状态（屏上无旧内容，无需擦除） */
+    lbl->w = w;
+    return;
+#endif
+    if (lbl->drawn) {
+        label_erase(lbl);        /* 用旧对齐/旧宽度擦除旧内容 */
+    }
+    lbl->align = align;
+    lbl->w = w;
+    if (lbl->drawn) {
+        label_paint(lbl);        /* 按新对齐重画 */
+    }
 }

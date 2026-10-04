@@ -59,7 +59,9 @@ static const mui_button_style_t s_btn_style = {
     .fg = MUI_WHITE,
     .border = MUI_WHITE,
     .shape = MUI_BUTTON_SHAPE_ROUND,
-    .radius = 3
+    .radius = 3,
+    .aa = 1,             /* 圆角抗锯齿 */
+    .screen_bg = UI_BG   /* 按钮贴在页面底色上，AA 按它混色 */
 };
 
 /* -------- 页面与内容区 -------- */
@@ -661,6 +663,7 @@ static void ui_page_show(uint8_t page)
     }
     s_page = page;
     mui_rect_fill(0, UI_CONTENT_TOP, BSP_LCD_WIDTH, UI_CONTENT_H, UI_BG);
+    mui_button_invalidate(&s_mode);   /* 内容区被清，其内的按钮须强制重绘 */
     ui_page_draw(page);
 }
 

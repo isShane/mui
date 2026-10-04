@@ -11,7 +11,18 @@
 #ifndef SIM_CONFIG_H
 #define SIM_CONFIG_H
 
-#define SIM_W 128  /**< 模拟屏宽 */
-#define SIM_H 128  /**< 模拟屏高 */
+#define SIM_W 1024 /**< 模拟屏宽 */
+#define SIM_H 600  /**< 模拟屏高 */
+
+/* -------- 编译期校验：缓冲后端必须装得下这块屏 -------- */
+#include "mui_conf.h"
+
+#if MUI_CFG_HAS_BUFFER && (SIM_W > MUI_CFG_BUF_MAX_W)
+#error "缓冲后端要求 MUI_CFG_BUF_MAX_W >= SIM_W；请同步 CMakeLists.txt 里的 MUI_SIM_BUF_W"
+#endif
+
+#if MUI_CFG_HAS_BUFFER && !MUI_CFG_IS_STRIP && (SIM_H > MUI_CFG_BUF_MAX_H)
+#error "全屏缓冲后端要求 MUI_CFG_BUF_MAX_H >= SIM_H；请同步 CMakeLists.txt 里的 MUI_SIM_BUF_H"
+#endif
 
 #endif /* SIM_CONFIG_H */

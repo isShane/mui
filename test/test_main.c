@@ -11,6 +11,14 @@
 #include "mui_label.h"
 #include "mui_button.h"
 #include "mui_progressbar.h"
+#include "mui_slider.h"
+#include "mui_toggle.h"
+#include "mui_anim.h"
+#include "mui_layout.h"
+#include "mui_gauge.h"
+#include "mui_list.h"
+#include "mui_popup.h"
+#include "mui_dropdown.h"
 #include "sim_helper.h"
 
 /* 测试背景色：所有"图形外部"断言跟随此色，改背景只需改这一处 */
@@ -1438,6 +1446,73 @@ static const char *demo_png_name(void)
 #endif
 }
 
+/* -------- 新控件目视总览：仪表盘 / 列表 / 下拉（展开） / 弹窗 -------- */
+static void render_controls(void)
+{
+    static mui_gauge_t g;
+    static mui_list_t lst;
+    static mui_dropdown_t dd;
+    static mui_popup_t pp;
+    static const char *const items[4] = { "11", "22", "33", "12" };
+    static const mui_gauge_style_t gst = {
+        MUI_RGB565(0x33, 0x3D, 0x4E),   /* track */
+        MUI_RGB565(0x04, 0xAA, 0xF4),   /* fill */
+        MUI_BLACK,                      /* text */
+        MUI_WHITE,                      /* bg */
+        18,                             /* thick */
+        135, 405,                       /* 270° 扫角 */
+        1, 1, 1                         /* aa / show_value / percent */
+    };
+    static const mui_button_style_t bst = {
+        MUI_RGB565(0x04, 0xAA, 0xF4), MUI_RGB565(0x0A, 0x2A, 0x5A), MUI_WHITE,
+        MUI_WHITE, MUI_BUTTON_SHAPE_ROUND, 6, 1, MUI_WHITE
+    };
+    int i;
+
+    mui_reset_clip();
+    mui_screen_clear(MUI_WHITE);
+
+    /* 仪表盘：62%，中心显示数值 */
+    mui_gauge_init(&g, 90, 110, 70, 0, 100, 62, &gst);
+    mui_gauge_set_font(&g, &lv_mono_font);
+    mui_gauge_draw(&g);
+
+    /* 列表：6 行、选中第 2 行 */
+    mui_list_init(&lst, 200, 30, 120, 110, 24, 4);
+    mui_list_set_rows(&lst, 6);
+    mui_list_set_sel(&lst, 2);
+    mui_list_draw_frame(&lst, MUI_WHITE, MUI_RGB565(0xCC, 0xCC, 0xCC));
+    mui_list_begin(&lst);
+    for (i = 0; i < 6; i++) {
+        mui_rect_t r = mui_list_row_rect(&lst, i);
+        uint16_t b = (i == 2) ? MUI_RGB565(0x04, 0xAA, 0xF4) : MUI_WHITE;
+        mui_rect_fill((int16_t)(r.x + 2), r.y, (int16_t)(r.x2 - r.x - 4),
+                      (int16_t)(r.y2 - r.y), b);
+        mui_text_draw_rect((int16_t)(r.x + 6), r.y, (int16_t)(r.x2 - r.x - 12),
+                           (int16_t)(r.y2 - r.y), "123", &lv_mono_font,
+                           (i == 2) ? MUI_WHITE : MUI_BLACK, b, 1, MUI_ALIGN_LEFT);
+    }
+    mui_list_end(&lst);
+
+    /* 下拉（展开态） */
+    mui_dropdown_init(&dd, 340, 30, 110, 26, items, 4, 24, &lv_mono_font, &bst);
+    mui_dropdown_set_colors(&dd, MUI_WHITE, MUI_RGB565(0x04, 0xAA, 0xF4),
+                            MUI_BLACK, MUI_WHITE, MUI_BLACK);
+    mui_dropdown_open(&dd);
+    mui_dropdown_draw(&dd);
+
+    /* 弹窗：画在最上层 */
+    mui_popup_init(&pp, 60, 240, 360, 150, "123", "321", &lv_mono_font);
+    mui_popup_set_colors(&pp, MUI_WHITE, MUI_BLACK, MUI_BLACK, MUI_BLACK);
+    mui_popup_add_button(&pp, "11", &bst);
+    mui_popup_add_button(&pp, "22", &bst);
+    mui_popup_open(&pp);
+    mui_popup_draw(&pp);
+
+    mui_screen_flush();
+    sim_export_png("test_output_controls.png");
+}
+
 static void render_demo(void)
 {
     mui_screen_clear(MUI_WHITE);
@@ -1511,8 +1586,1189 @@ static void render_demo(void)
         mui_progressbar_set_value(&pb_aa, 60);
     }
 
+    /* ---- 控件总览：贴图按钮 / 滑块 / 开关 / 复选 / 单选 / 圆环 ---- */
+    mui_screen_clear(MUI_WHITE);
+    {
+        /* 贴图按钮（横向渐变底板） */
+        static uint16_t g_face[140 * 34];
+        static mui_button_t ib;
+        mui_image_t face;
+        int i;
+
+        face.w = 140; face.h = 34; face.data = g_face;
+        for (i = 0; i < 140 * 34; i++) {
+            uint8_t t = (uint8_t)(((i % 140) * 255) / 139);
+            g_face[i] = mui_color_mix(MUI_RGB565(0x0A, 0x2A, 0x5A),
+                                      MUI_RGB565(0x2E, 0xCC, 0xFF), t);
+        }
+        mui_button_init(&ib, 20, 20, 140, 34, NULL, NULL, NULL);
+        mui_button_set_bg_image(&ib, &face);
+        mui_button_draw(&ib);
+    }
+    {
+        /* 滑块 */
+        static const mui_slider_style_t st = {
+            MUI_RGB565(0x33, 0x3D, 0x4E), MUI_RGB565(0x04, 0xAA, 0xF4),
+            MUI_WHITE, MUI_RGB565(0x04, 0xAA, 0xF4), MUI_WHITE,
+            10, 15, MUI_SLIDER_HORIZONTAL, 1,
+        };
+        static mui_slider_t sl;
+        mui_slider_init(&sl, 30, 90, 200, 30, 0, 100, 65, &st);
+        mui_slider_draw(&sl);
+    }
+    {
+        /* 开关 ON / OFF */
+        static mui_switch_t a, b;
+        mui_switch_init(&a, 30, 150, 80, 26, 1, NULL);
+        mui_switch_set_text(&a, "WiFi");
+        mui_switch_init(&b, 30, 190, 80, 26, 0, NULL);
+        mui_switch_set_text(&b, "BT");
+        mui_switch_draw(&a);
+        mui_switch_draw(&b);
+    }
+    {
+        /* 复选 */
+        static mui_checkbox_t a, b;
+        mui_checkbox_init(&a, 30, 240, 150, 26, 1, NULL);
+        mui_checkbox_set_text(&a, "Check ON");
+        mui_checkbox_init(&b, 30, 274, 150, 26, 0, NULL);
+        mui_checkbox_set_text(&b, "Check OFF");
+        mui_checkbox_draw(&a);
+        mui_checkbox_draw(&b);
+    }
+    {
+        /* 单选（互斥组） */
+        static mui_radio_t a, b, *g[3];
+        g[0] = &a; g[1] = &b; g[2] = NULL;
+        mui_radio_init(&a, 30, 320, 150, 26, 1, NULL);
+        mui_radio_set_text(&a, "Option A");
+        mui_radio_init(&b, 30, 354, 150, 26, 0, NULL);
+        mui_radio_set_text(&b, "Option B");
+        mui_radio_set_group(&a, g);
+        mui_radio_set_group(&b, g);
+        mui_radio_draw(&a);
+        mui_radio_draw(&b);
+    }
+    {
+        /* 圆环进度（半程 / 满程） */
+        const uint16_t track  = MUI_RGB565(0x33, 0x3D, 0x4E);
+        const uint16_t accent = MUI_RGB565(0x04, 0xAA, 0xF4);
+        const uint16_t acc2   = MUI_RGB565(0x2E, 0xCC, 0x71);
+
+        mui_ring_fill_aa(360, 130, 30, 46, 0, 360, track, MUI_WHITE);
+        mui_ring_fill_aa(360, 130, 30, 46, 135, 300, accent, MUI_WHITE);
+        mui_ring_fill_aa(360, 300, 30, 46, 0, 360, track, MUI_WHITE);
+        mui_ring_fill_aa(360, 300, 30, 46, 135, 405, acc2, MUI_WHITE);
+    }
+
     mui_screen_flush();   /* 缓冲后端：推屏后才能导出完整画面 */
     sim_export_png(demo_png_name());
+
+    render_controls();    /* 另行导出一张新控件总览图 */
+}
+
+/* -------- 测试：圆弧 / 圆环扇区 -------- */
+static void test_ring(void)
+{
+    const int16_t cx = 100, cy = 100, rin = 30, rout = 50;
+    int16_t mid = (int16_t)((rin + rout) / 2);   /* 环带中点半径 */
+
+    /* 1) 越界/非法参数全程安全 */
+    sim_clear_violations();
+    mui_ring_fill(cx, cy, rout, rout, 0, 360, MUI_RED);   /* rin>=rout */
+    mui_ring_fill(cx, cy, -10, 40, 0, 360, MUI_RED);     /* rin<0 视作 0 */
+    mui_arc_draw(cx, cy, 40, 0, 360, 0, MUI_RED);        /* thickness<=0 */
+    mui_ring_fill_aa(cx, cy, 30, 50, 0, 360, MUI_RED, MUI_WHITE);
+    CHECK(sim_violations() == 0, "圆环图元非法参数未触发越界违规");
+
+    /* 2) 整环几何：环带内填充、内孔与外圈外为背景 */
+    mui_screen_clear(TEST_BG);
+    mui_ring_fill(cx, cy, rin, rout, 0, 360, MUI_BLUE);
+    CHECK(px(cx, cy - mid) == MUI_BLUE, "整环：上边环带中点");
+    CHECK(px(cx, cy + mid) == MUI_BLUE, "整环：下边环带中点");
+    CHECK(px(cx - mid, cy) == MUI_BLUE, "整环：左边环带中点");
+    CHECK(px(cx + mid, cy) == MUI_BLUE, "整环：右边环带中点");
+    CHECK(px(cx, cy - (rin - 5)) == TEST_BG, "整环：内孔未填充");
+    CHECK(px(cx, cy - (rout + 5)) == TEST_BG, "整环：外圈外未填充");
+
+    /* 3) 四分之一扇形（rin=0, 0~90°）：仅覆盖右下象限（x>0,y>0） */
+    mui_screen_clear(TEST_BG);
+    mui_ring_fill(cx, cy, 0, rout, 0, 90, MUI_GREEN);
+    CHECK(px(cx + mid, cy) == MUI_GREEN, "扇形：0° 方向(+x)在扇区内");
+    CHECK(px(cx, cy + mid) == MUI_GREEN, "扇形：90° 方向(+y)在扇区内");
+    CHECK(px(cx + 28, cy + 28) == MUI_GREEN, "扇形：45°（半径约40，落在环带内）");
+    CHECK(px(cx - mid, cy) == TEST_BG, "扇形：180° 在扇区外");
+    CHECK(px(cx, cy - mid) == TEST_BG, "扇形：270° 在扇区外");
+
+    /* 4) 跨 0° 的弧（315°~405°）：覆盖右半（x>0），左半圆在扇区外 */
+    mui_screen_clear(TEST_BG);
+    mui_ring_fill(cx, cy, rin, rout, 315, 405, MUI_RED);
+    CHECK(px(cx + mid, cy) == MUI_RED, "跨0弧：0°(+x)在扇区内");
+    CHECK(px(cx, cy + mid) == TEST_BG, "跨0弧：90°(+y)在扇区外");
+    CHECK(px(cx, cy - mid) == TEST_BG, "跨0弧：270°(-y)在扇区外");
+    CHECK(px(cx - mid, cy) == TEST_BG, "跨0弧：180° 在扇区外");
+
+    /* 5) 整环 AA：开 AA 时内外边缘应产生混色像素；关 AA 时退化为纯色硬边 */
+    {
+        mui_screen_clear(TEST_BG);
+        mui_ring_fill_aa(cx, cy, rin, rout, 0, 360, MUI_BLACK, MUI_WHITE);
+        mui_screen_flush();
+#if MUI_CFG_AA
+        {
+            int blend = 0, i;
+            for (i = 0; i < (int)(SIM_W * SIM_H); i++) {
+                uint16_t c = sim_get_fb()[i];
+                if (c != MUI_WHITE && c != MUI_BLACK) {
+                    blend++;
+                }
+            }
+            CHECK(blend > 20, "AA 整环未在内外边缘产生混色像素");
+        }
+#endif
+        CHECK(px(cx, cy - (rin - 5)) == MUI_WHITE, "AA 整环：内孔仍为背景");
+    }
+
+    /* 6) 大跨度弧（>180°）方向正确性：0~270° 覆盖除右上象限外的 3/4 圈 */
+    mui_screen_clear(TEST_BG);
+    mui_ring_fill(cx, cy, rin, rout, 0, 270, MUI_BLUE);
+    CHECK(px(cx + mid, cy) == MUI_BLUE, "大跨度弧：0°(+x)在内");
+    CHECK(px(cx, cy + mid) == MUI_BLUE, "大跨度弧：90°(+y)在内");
+    CHECK(px(cx - mid, cy) == MUI_BLUE, "大跨度弧：180°(-x)在内");
+    CHECK(px(cx, cy - mid) == MUI_BLUE, "大跨度弧：270°(-y)在内");
+    CHECK(px(cx + 28, cy - 28) == TEST_BG, "大跨度弧：315° 在外（缺口）");
+
+    /* 7) 进度缩小不留残影：先画满 270°，再重画轨道 + 缩到 180° */
+    {
+        const uint16_t card  = MUI_RGB565(0x22, 0x2B, 0x3A);
+        const uint16_t track = MUI_RGB565(0x33, 0x3D, 0x4E);
+        const uint16_t acc   = MUI_RGB565(0x04, 0xAA, 0xF4);
+        const int16_t gx = 240, gy = 60;
+
+        mui_rect_fill(180, 0, 140, 120, card);
+        mui_ring_fill_aa(gx, gy, rin, rout, 0, 360, track, card);
+        mui_ring_fill_aa(gx, gy, rin, rout, 0, 270, acc, card);
+        CHECK(px(gx - 28, gy - 28) == acc, "残影：225° 处填满");
+
+        mui_ring_fill_aa(gx, gy, rin, rout, 0, 360, track, card);   /* 重画轨道 */
+        mui_ring_fill_aa(gx, gy, rin, rout, 0, 180, acc, card);     /* 缩到 180° */
+        CHECK(px(gx - 28, gy - 28) == track, "缩弧后 225° 处残留了填充色");
+        CHECK(px(gx, gy + mid) == acc, "缩弧后 90° 处仍为填充色");
+    }
+
+    /* 8) 大跨度弧内部不得有杂线：135~405 时，225°/315° 处应为纯填充色 */
+    mui_screen_clear(TEST_BG);
+    mui_ring_fill_aa(cx, cy, rin, rout, 135, 405, MUI_BLACK, MUI_WHITE);
+    CHECK(px(cx - 28, cy - 28) == MUI_BLACK, "大弧内部 225° 处有杂线（非纯色）");
+    CHECK(px(cx + 28, cy - 28) == MUI_BLACK, "大弧内部 315° 处有杂线（非纯色）");
+}
+
+/* -------- 测试：按钮底板圆角抗锯齿 -------- */
+static void test_button_aa(void)
+{
+    static const mui_button_style_t st = {
+        .bg = MUI_BLUE, .bg_press = MUI_NAVY, .fg = MUI_WHITE,
+        .border = MUI_BLUE, .shape = MUI_BUTTON_SHAPE_PILL, .radius = 0,
+        .aa = 1, .screen_bg = MUI_WHITE,
+    };
+    static mui_button_t btn;
+    int blend = 0, i;
+
+    mui_screen_clear(MUI_WHITE);
+    mui_button_init(&btn, 20, 20, 140, 48, &st, NULL, NULL);
+    mui_button_draw(&btn);
+    mui_screen_flush();
+    for (i = 0; i < (int)(SIM_W * SIM_H); i++) {
+        uint16_t c = sim_get_fb()[i];
+        if (c != MUI_WHITE && c != MUI_BLUE) {
+            blend++;
+        }
+    }
+    CHECK(blend > 10, "按钮 AA 未在圆角边缘产生混色像素");
+}
+
+/* -------- 测试：按钮底板贴图（全彩） -------- */
+static void test_button_image(void)
+{
+    static const uint16_t face[16] = {
+        MUI_GREEN, MUI_GREEN, MUI_GREEN, MUI_GREEN,
+        MUI_GREEN, MUI_GREEN, MUI_GREEN, MUI_GREEN,
+        MUI_GREEN, MUI_GREEN, MUI_GREEN, MUI_GREEN,
+        MUI_GREEN, MUI_GREEN, MUI_GREEN, MUI_GREEN,
+    };
+    static const mui_image_t img = { 4, 4, face };
+    static mui_button_t btn;
+
+    mui_screen_clear(MUI_WHITE);
+    mui_button_init(&btn, 10, 10, 4, 4, NULL, NULL, NULL);
+    mui_button_set_bg_image(&btn, &img);
+    mui_button_draw(&btn);
+    mui_screen_flush();
+    CHECK(px(10, 10) == MUI_GREEN, "图片按钮：贴图左上角");
+    CHECK(px(13, 13) == MUI_GREEN, "图片按钮：贴图右下角");
+    CHECK(px(14, 14) == MUI_WHITE, "图片按钮：贴图之外不绘制");
+}
+
+/* -------- 测试：缩放贴图 / 九宫格 -------- */
+static void test_image_scale_nine(void)
+{
+    static const uint16_t src[4] = { MUI_RED, MUI_GREEN, MUI_BLUE, MUI_YELLOW };
+    static const mui_image_t img = { 2, 2, src };
+
+    mui_screen_clear(MUI_WHITE);
+    mui_image_draw_scaled(10, 10, 40, 20, img.w, img.h, img.data);
+    mui_screen_flush();
+    CHECK(px(12, 12) == MUI_RED, "缩放贴图：左上");
+    CHECK(px(45, 12) == MUI_GREEN, "缩放贴图：右上");
+    CHECK(px(12, 28) == MUI_BLUE, "缩放贴图：左下");
+
+    mui_screen_clear(MUI_WHITE);
+    mui_image_draw_nine(10, 10, 40, 40, img.w, img.h, img.data, 1, 1, 1, 1);
+    mui_screen_flush();
+    CHECK(px(10, 10) == MUI_RED, "九宫格：左上角");
+    CHECK(px(49, 10) == MUI_GREEN, "九宫格：右上角");
+    CHECK(px(10, 49) == MUI_BLUE, "九宫格：左下角");
+    CHECK(px(49, 49) == MUI_YELLOW, "九宫格：右下角");
+}
+
+/* -------- 测试：滑块 -------- */
+static void test_slider(void)
+{
+    static mui_slider_t sl;
+
+    mui_slider_init(&sl, 10, 10, 100, 20, 0, 100, 0, NULL);
+    mui_touch_update(60, 20, 1);                 /* 按下到中点附近 */
+    (void)mui_slider_touch(&sl, MUI_TOUCH_DOWN);
+    CHECK(mui_slider_get_value(&sl) == 50, "滑块：点击中点应为 50");
+
+    mui_slider_set_value(&sl, 30);
+    CHECK(mui_slider_get_value(&sl) == 30, "滑块：set_value");
+    mui_slider_set_value(&sl, 999);
+    CHECK(mui_slider_get_value(&sl) == 100, "滑块：超范围自动夹取");
+
+    mui_slider_draw(&sl);
+    mui_touch_update(0, 0, 0);
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+}
+
+/* -------- 测试：滑块拖动不留拖影 -------- */
+static void test_slider_trail(void)
+{
+    static const mui_slider_style_t st = {
+        .track = MUI_RGB565(0x33, 0x3D, 0x4E), .fill = MUI_BLUE,
+        .knob = MUI_RED, .knob_border = MUI_RED, .screen_bg = MUI_WHITE,
+        .thickness = 10, .knob_r = 14, .dir = MUI_SLIDER_HORIZONTAL, .aa = 1,
+    };
+    static mui_slider_t sl;
+
+    mui_screen_clear(MUI_WHITE);
+    mui_slider_init(&sl, 20, 100, 200, 30, 0, 100, 90, &st);
+    mui_slider_draw(&sl);
+    CHECK(px(199, 105) == MUI_RED, "滑块：90% 处有滑块");
+
+    mui_slider_set_value(&sl, 10);
+    mui_slider_draw(&sl);
+    CHECK(px(199, 105) == MUI_WHITE, "滑块：改值后旧滑块被擦除（无拖影）");
+    CHECK(px(39, 105) == MUI_RED, "滑块：10% 处为新滑块");
+}
+
+/* -------- 测试：开关 / 复选 / 单选 -------- */
+static void test_toggle(void)
+{
+    static mui_switch_t sw;
+    static mui_checkbox_t cb;
+    static mui_radio_t r1, r2, *grp[3];
+
+    mui_switch_init(&sw, 10, 10, 60, 24, 0, NULL);
+    mui_touch_update(20, 20, 1);
+    CHECK(mui_switch_touch(&sw, MUI_TOUCH_CLICK) == 1 && mui_switch_get_on(&sw) == 1,
+          "开关：点击切换");
+    mui_switch_draw(&sw);
+    mui_touch_update(0, 0, 0);
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+
+    mui_checkbox_init(&cb, 10, 50, 100, 24, 0, NULL);
+    mui_touch_update(20, 60, 1);
+    CHECK(mui_checkbox_touch(&cb, MUI_TOUCH_CLICK) == 1 && mui_checkbox_get_checked(&cb) == 1,
+          "复选：点击勾选");
+    mui_checkbox_draw(&cb);
+    mui_touch_update(0, 0, 0);
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+
+    grp[0] = &r1; grp[1] = &r2; grp[2] = NULL;
+    mui_radio_init(&r1, 10, 90, 100, 24, 1, NULL);
+    mui_radio_init(&r2, 10, 120, 100, 24, 0, NULL);
+    mui_radio_set_group(&r1, grp);
+    mui_radio_set_group(&r2, grp);
+    mui_touch_update(20, 130, 1);
+    CHECK(mui_radio_touch(&r2, MUI_TOUCH_CLICK) == 1
+          && mui_radio_get_selected(&r2) == 1 && mui_radio_get_selected(&r1) == 0,
+          "单选：互斥选中");
+    mui_radio_draw(&r1);
+    mui_radio_draw(&r2);
+    mui_touch_update(0, 0, 0);
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+}
+
+/* -------- 测试：绘制裁剪区 -------- */
+static void test_clip_region(void)
+{
+    /* 0) 初始 / 复位：裁剪区为全屏，整屏填充照旧 */
+    mui_reset_clip();
+    mui_screen_clear(TEST_BG);
+
+    /* 1) 裁剪区内填充生效、区外不动 */
+    mui_set_clip(20, 20, 10, 10);
+    mui_rect_fill(0, 0, 100, 100, MUI_RED);        /* 只应写入 [20,30)x[20,30) */
+    mui_reset_clip();
+    CHECK(px(20, 20) == MUI_RED, "裁剪：区内左上角填充");
+    CHECK(px(29, 29) == MUI_RED, "裁剪：区内右下角填充");
+    CHECK(px(19, 25) == TEST_BG, "裁剪：区外左侧未写");
+    CHECK(px(30, 25) == TEST_BG, "裁剪：区外右侧未写");
+    CHECK(px(25, 19) == TEST_BG, "裁剪：区外上方未写");
+    CHECK(px(25, 30) == TEST_BG, "裁剪：区外下方未写");
+
+    /* 2) 完全在裁剪区外的绘制：无写入、无底层越界 */
+    sim_clear_violations();
+    mui_set_clip(200, 200, 20, 20);
+    mui_rect_fill(0, 0, 10, 10, MUI_GREEN);         /* 完全在区外，应丢弃 */
+    mui_pixel_draw(205, 205, MUI_GREEN);            /* 区内，应写入 */
+    mui_reset_clip();
+    CHECK(sim_violations() == 0, "裁剪：区外绘制触发底层越界");
+    CHECK(px(5, 5) == TEST_BG, "裁剪：完全在区外的矩形未写");
+    CHECK(px(205, 205) == MUI_GREEN, "裁剪：区内像素已写");
+
+    /* 3) 跨裁剪区边界：只写交集 */
+    mui_screen_clear(TEST_BG);
+    mui_set_clip(30, 30, 10, 10);
+    mui_rect_fill(25, 25, 20, 20, MUI_BLUE);        /* 交集 = [30,40)x[30,40) */
+    mui_reset_clip();
+    CHECK(px(30, 30) == MUI_BLUE, "裁剪：跨边界交集左上");
+    CHECK(px(39, 39) == MUI_BLUE, "裁剪：跨边界交集右下");
+    CHECK(px(29, 29) == TEST_BG, "裁剪：跨边界只写交集(左上外侧)");
+    CHECK(px(40, 40) == TEST_BG, "裁剪：跨边界只写交集(右下外侧)");
+
+    /* 4) 空裁剪区：全部丢弃 */
+    mui_screen_clear(TEST_BG);
+    sim_clear_violations();
+    mui_set_clip(10, 10, 0, 0);
+    mui_rect_fill(0, 0, 50, 50, MUI_RED);
+    mui_pixel_draw(12, 12, MUI_RED);
+    mui_reset_clip();
+    CHECK(px(12, 12) == TEST_BG, "裁剪：空裁剪区丢弃全部绘制");
+    CHECK(sim_violations() == 0, "裁剪：空裁剪区触发底层越界");
+
+    /* 5) 裁剪区自动与屏幕求交：越界参数安全 */
+    mui_screen_clear(TEST_BG);
+    sim_clear_violations();
+    mui_set_clip(-50, -50, 100, 100);               /* 只应保留 [0,50)x[0,50) */
+    mui_rect_fill(-100, -100, 300, 300, MUI_YELLOW);
+    mui_reset_clip();
+    CHECK(sim_violations() == 0, "裁剪：越界裁剪区触发底层越界");
+    CHECK(px(49, 49) == MUI_YELLOW, "裁剪：越界裁剪区与屏幕求交后仍有效");
+    CHECK(px(50, 50) == TEST_BG, "裁剪：越界裁剪区外未写");
+
+    /* 6) 嵌套 save / restore */
+    mui_screen_clear(TEST_BG);
+    mui_reset_clip();
+    {
+        mui_rect_t outer = mui_clip_save();          /* 全屏 */
+        mui_set_clip(10, 10, 40, 40);
+        {
+            mui_rect_t inner = mui_clip_save();      /* [10,50)x[10,50) */
+            mui_set_clip(20, 20, 10, 10);
+            mui_rect_fill(0, 0, 100, 100, MUI_YELLOW);  /* 只 [20,30)x[20,30) */
+            mui_clip_restore(inner);
+        }
+        mui_rect_fill(0, 0, 100, 100, MUI_GREEN);    /* 恢复外层裁剪后重绘 */
+        mui_clip_restore(outer);
+    }
+    CHECK(px(45, 45) == MUI_GREEN, "裁剪：恢复外层后在范围内填充");
+    CHECK(px(35, 35) == MUI_GREEN, "裁剪：内层区域被外层重绘覆盖");
+    CHECK(px(9, 9) == TEST_BG, "裁剪：外层边界外未写");
+    CHECK(px(50, 50) == TEST_BG, "裁剪：外层边界外(右下)未写");
+
+    /* 7) 各图元在裁剪区下都不越界，区外像素保持背景 */
+    mui_screen_clear(TEST_BG);
+    mui_set_clip(100, 100, 30, 30);
+    sim_clear_violations();
+    mui_circle_fill(90, 90, 60, MUI_RED);
+    mui_circle_draw(90, 90, 60, MUI_RED);
+    mui_circle_draw_aa(90, 90, 60, MUI_RED, TEST_BG);
+    mui_circle_fill_aa(90, 90, 60, MUI_RED, TEST_BG);
+    mui_ellipse_fill(90, 90, 70, 50, MUI_RED);
+    mui_ellipse_draw(90, 90, 70, 50, MUI_RED);
+    mui_triangle_fill(60, 60, 220, 100, 100, 220, MUI_RED);
+    mui_triangle_draw(60, 60, 220, 100, 100, 220, MUI_RED);
+    mui_line_draw(60, 60, 220, 220, MUI_RED);
+    mui_line_draw_aa(60, 60, 220, 220, MUI_RED, TEST_BG);
+    mui_round_rect_fill_aa(60, 60, 200, 200, 20, MUI_RED, TEST_BG);
+    mui_round_rect_draw_aa(60, 60, 200, 200, 20, MUI_RED, TEST_BG);
+    mui_ring_fill(150, 150, 20, 40, 0, 270, MUI_RED);
+    mui_ring_fill_aa(150, 150, 20, 40, 0, 270, MUI_RED, TEST_BG);
+    mui_arc_draw(150, 150, 60, 0, 270, 10, MUI_RED);
+    mui_arc_draw_aa(150, 150, 60, 0, 270, 10, MUI_RED, TEST_BG);
+    mui_reset_clip();
+    CHECK(sim_violations() == 0, "裁剪：各图元在裁剪区下触发底层越界");
+    CHECK(px(99, 115) == TEST_BG, "裁剪：图元裁剪区外(左)未写");
+    CHECK(px(130, 115) == TEST_BG, "裁剪：图元裁剪区外(右)未写");
+    CHECK(px(115, 99) == TEST_BG, "裁剪：图元裁剪区外(上)未写");
+    CHECK(px(115, 130) == TEST_BG, "裁剪：图元裁剪区外(下)未写");
+
+    /* 8) 裁剪区影响整屏矩形填充（清屏只清裁剪区内） */
+    mui_screen_clear(TEST_BG);
+    mui_set_clip(60, 60, 10, 10);
+    mui_rect_fill(0, 0, 480, 480, MUI_NAVY);
+    mui_reset_clip();
+    CHECK(px(65, 65) == MUI_NAVY, "裁剪：整屏填充只落在裁剪区内");
+    CHECK(px(59, 65) == TEST_BG && px(70, 65) == TEST_BG,
+          "裁剪：整屏填充未越出裁剪区");
+
+    mui_reset_clip();
+}
+
+/* -------- 测试：裁剪下的 alpha 蒙版（行宽不能按裁剪后宽度反推） -------- */
+static void test_clip_mask(void)
+{
+    /* 20 宽的蒙版：源列 0..9 透明(0)，10..19 不透明(255)；两行同规律 */
+    static const uint8_t mask[2][20] = {
+        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
+        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
+    };
+    int c;
+
+    mui_reset_clip();
+    mui_screen_clear(TEST_BG);
+
+    /* 裁剪到屏幕列 6..15：源列 6..15 可见，其中 >=10 不透明 → 屏幕 10..15 变黑 */
+    mui_set_clip(6, 0, 10, 2);
+    mui_image_draw_mask(0, 0, 20, 2, &mask[0][0], MUI_BLACK, TEST_BG);
+    mui_reset_clip();
+
+    for (c = 0; c < 20; c++) {
+        uint16_t want = ((c >= 10 && c < 16)) ? MUI_BLACK : TEST_BG;
+        CHECK(px(c, 0) == want, "裁剪蒙版：第 0 行像素错位（行宽被裁剪后宽度污染）");
+        CHECK(px(c, 1) == want, "裁剪蒙版：第 1 行像素错位（行宽被裁剪后宽度污染）");
+    }
+    CHECK(px(16, 0) == TEST_BG, "裁剪蒙版：裁剪区外未写(右)");
+    CHECK(px(5, 0) == TEST_BG, "裁剪蒙版：裁剪区外未写(左)");
+}
+
+/* -------- 测试：脏矩形跟踪 -------- */
+
+#if MUI_CFG_DIRTY_N > 0
+
+/** @brief 点是否落在脏区并集内 */
+static int point_in_dirty_union(int16_t x, int16_t y)
+{
+    uint8_t n = mui_dirty_count(), i;
+    mui_rect_t r;
+
+    for (i = 0; i < n; i++) {
+        if (!mui_dirty_get(i, &r)) {
+            continue;
+        }
+        if (x >= r.x && x < r.x2 && y >= r.y && y < r.y2) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/** @brief 核心不变式：所有被实际写入的像素都必须落在脏区并集内 */
+static void check_dirty_invariant(void)
+{
+    int x, y, miss = 0;
+
+    mui_reset_clip();
+    mui_screen_clear(TEST_BG);
+    mui_dirty_clear();          /* 清屏的脏已消费，从零开始记 */
+
+    mui_rect_fill(5, 5, 20, 20, MUI_RED);
+    mui_circle_fill(100, 100, 30, MUI_GREEN);
+    mui_line_draw(200, 10, 300, 60, MUI_BLUE);
+    mui_round_rect_fill(350, 350, 60, 60, 15, MUI_YELLOW);
+    mui_circle_draw(60, 400, 25, MUI_CYAN);
+    mui_triangle_fill(400, 100, 460, 200, 420, 20, MUI_MAGENTA);
+    mui_ring_fill(130, 300, 10, 25, 0, 270, MUI_ORANGE);
+
+    mui_screen_flush();
+    for (y = 0; y < SIM_H; y++) {
+        for (x = 0; x < SIM_W; x++) {
+            if (sim_get_fb()[y * SIM_W + x] != TEST_BG
+                && !point_in_dirty_union((int16_t)x, (int16_t)y)) {
+                miss++;
+            }
+        }
+    }
+    CHECK(miss == 0, "脏矩形：存在未被脏区覆盖的已写像素（漏报）");
+}
+
+#endif /* MUI_CFG_DIRTY_N > 0 */
+
+static void test_dirty(void)
+{
+#if MUI_CFG_DIRTY_N > 0
+    mui_rect_t r;
+    uint8_t i;
+
+    /* 1) 同一区域重复标记 → 合并为 1 个 */
+    mui_dirty_clear();
+    for (i = 0; i < 5; i++) {
+        mui_dirty_mark(10, 10, 20, 20);
+    }
+    CHECK(mui_dirty_count() == 1, "脏矩形：重复标记应合并为 1 个");
+
+    /* 2) bounds / get 正确 */
+    CHECK(mui_dirty_bounds(&r) == 1 && r.x == 10 && r.y == 10
+          && r.x2 == 30 && r.y2 == 30, "脏矩形：bounds 内容错误");
+    CHECK(mui_dirty_get(0, &r) == 1, "脏矩形：get(0) 应成功");
+    CHECK(mui_dirty_get(1, &r) == 0, "脏矩形：越界 get 应失败");
+
+    /* 3) 零散区域超过槽位上限 → 数量有界，且并集仍覆盖全部 */
+    mui_dirty_clear();
+    for (i = 0; i < 10; i++) {
+        mui_dirty_mark((int16_t)(i * 30), 0, 10, 10);
+    }
+    CHECK(mui_dirty_count() <= MUI_CFG_DIRTY_N, "脏矩形：数量超过槽位上限");
+    for (i = 0; i < 10; i++) {
+        CHECK(point_in_dirty_union((int16_t)(i * 30 + 5), 5),
+              "脏矩形：并集未覆盖已标记的零散区域");
+    }
+
+    /* 4) 标记受裁剪区限制 */
+    mui_reset_clip();
+    mui_dirty_clear();
+    mui_set_clip(50, 50, 10, 10);
+    mui_dirty_mark(0, 0, 100, 100);
+    mui_reset_clip();
+    CHECK(mui_dirty_count() == 1 && mui_dirty_bounds(&r) == 1
+          && r.x == 50 && r.y == 50 && r.x2 == 60 && r.y2 == 60,
+          "脏矩形：标记未被裁剪到裁剪区");
+
+    /* 5) 空裁剪区 → 不产生脏区 */
+    mui_dirty_clear();
+    mui_set_clip(10, 10, 0, 0);
+    mui_dirty_mark(0, 0, 100, 100);
+    mui_reset_clip();
+    CHECK(mui_dirty_count() == 0, "脏矩形：空裁剪区不应产生脏区");
+
+    /* 6) 清空 */
+    mui_dirty_clear();
+    CHECK(mui_dirty_count() == 0 && mui_dirty_bounds(&r) == 0,
+          "脏矩形：clear 后应为空");
+
+    /* 7) 核心不变式 */
+    check_dirty_invariant();
+#else
+    mui_rect_t r;
+
+    mui_dirty_clear();
+    mui_dirty_mark(0, 0, 10, 10);
+    CHECK(mui_dirty_count() == 0, "脏矩形：功能关闭时 count 应恒为 0");
+    CHECK(mui_dirty_bounds(&r) == 0, "脏矩形：功能关闭时 bounds 应恒为 0");
+    CHECK(mui_dirty_get(0, &r) == 0, "脏矩形：功能关闭时 get 应恒返回 0");
+#endif
+}
+
+/* -------- 测试：按钮按需重绘（状态缓存 + invalidate） -------- */
+static void test_button_cache(void)
+{
+    static mui_button_t b;
+    const uint16_t bg_up = mui_button_style_default.bg;
+    const uint16_t bg_dn = mui_button_style_default.bg_press;
+
+    mui_reset_clip();
+    mui_screen_clear(MUI_WHITE);
+    mui_button_init(&b, 20, 20, 100, 40, NULL, NULL, NULL);
+    mui_button_draw(&b);                        /* 首次：必画 */
+    CHECK(px(35, 35) == bg_up, "按钮缓存：首次绘制生效");
+
+    /* 状态不变再次 draw：应跳过（预先涂红的区域保留） */
+    mui_rect_fill(30, 30, 10, 10, MUI_RED);
+    mui_button_draw(&b);
+    CHECK(px(35, 35) == MUI_RED, "按钮缓存：状态不变时应跳过重绘");
+
+    /* 状态改变：应重绘并覆盖红色 */
+    mui_button_set_pressed(&b, 1);
+    mui_button_draw(&b);
+    CHECK(px(35, 35) == bg_dn, "按钮缓存：按下态变化后应重绘");
+
+    /* 未变化时再次跳过 */
+    mui_rect_fill(30, 30, 10, 10, MUI_RED);
+    mui_button_draw(&b);
+    CHECK(px(35, 35) == MUI_RED, "按钮缓存：未变化时再次跳过");
+
+    /* invalidate 强制重绘 */
+    mui_button_invalidate(&b);
+    mui_button_draw(&b);
+    CHECK(px(35, 35) == bg_dn, "按钮缓存：invalidate 后应强制重绘");
+
+    /* 移位置应被检测到（旧位置留白、新位置出现按钮） */
+    mui_button_set_pos(&b, 220, 200);
+    mui_button_draw(&b);
+    CHECK(px(235, 215) == bg_dn, "按钮缓存：移位置后应重绘到新位置");
+
+    /* 禁用态切换也应触发重绘 */
+    mui_button_set_enabled(&b, 0);
+    mui_button_draw(&b);
+    CHECK(px(235, 215) != bg_dn, "按钮缓存：禁用态应重绘（换灰底）");
+
+    mui_reset_clip();
+}
+
+/* -------- 测试：动画（时间基 / 缓动 / 补间） -------- */
+static void test_anim(void)
+{
+    static const uint8_t curves[] = {
+        MUI_EASE_LINEAR, MUI_EASE_IN_QUAD, MUI_EASE_OUT_QUAD,
+        MUI_EASE_IN_OUT_QUAD, MUI_EASE_IN_CUBIC, MUI_EASE_OUT_CUBIC,
+        MUI_EASE_IN_OUT_CUBIC, MUI_EASE_OUT_BACK,
+    };
+    uint8_t i;
+
+    /* 1) 所有曲线端点：0 → 0，256 → 256 */
+    for (i = 0; i < (uint8_t)(sizeof(curves) / sizeof(curves[0])); i++) {
+        CHECK(mui_ease(curves[i], 0) == 0, "缓动：t=0 应为 0");
+        CHECK(mui_ease(curves[i], 256) == 256, "缓动：t=256 应为 256");
+    }
+    /* 2) 越界钳制 */
+    CHECK(mui_ease(MUI_EASE_LINEAR, -100) == 0, "缓动：负进度应钳到 0");
+    CHECK(mui_ease(MUI_EASE_LINEAR, 9999) == 256, "缓动：超界进度应钳到 256");
+    /* 3) 形状：缓入慢于线性、缓出快于线性 */
+    CHECK(mui_ease(MUI_EASE_IN_QUAD, 128) < 128, "缓动：in_quad 中点应慢于线性");
+    CHECK(mui_ease(MUI_EASE_OUT_QUAD, 128) > 128, "缓动：out_quad 中点应快于线性");
+    CHECK(mui_ease(MUI_EASE_IN_OUT_QUAD, 128) == 128, "缓动：in_out_quad 中点应恰过半");
+    /* 4) 回弹应过冲 */
+    {
+        int16_t peak = 0, t;
+        for (t = 0; t <= 256; t += 8) {
+            int16_t v = mui_ease(MUI_EASE_OUT_BACK, t);
+            if (v > peak) { peak = v; }
+        }
+        CHECK(peak > 256, "缓动：out_back 应有过冲（>256）");
+    }
+
+    /* 5) 补间 */
+    {
+        static mui_anim_t a;
+        mui_anim_init(&a, 0, MUI_EASE_LINEAR);
+        mui_anim_start(&a, 0, 100, 100);
+        CHECK(!mui_anim_done(&a) && mui_anim_value(&a) == 0, "补间：起始状态");
+        mui_anim_update(&a, 50);
+        CHECK(mui_anim_value(&a) == 50, "补间：线性半程应为 50");
+        mui_anim_update(&a, 50);
+        CHECK(mui_anim_done(&a) && mui_anim_value(&a) == 100, "补间：结束应到位并完成");
+
+        mui_anim_init(&a, 0, MUI_EASE_IN_QUAD);
+        mui_anim_start(&a, 0, 100, 100);
+        mui_anim_update(&a, 50);
+        CHECK(mui_anim_value(&a) < 50, "补间：缓入半程应偏小");
+
+        mui_anim_to(&a, 200, 100);                 /* 从当前值出发改目标 */
+        CHECK(!mui_anim_done(&a), "补间：改目标后应重新运行");
+        mui_anim_update(&a, 100);
+        CHECK(mui_anim_value(&a) == 200, "补间：改目标后应到达 200");
+
+        mui_anim_start(&a, 0, 55, 0);              /* 零时长立即到位 */
+        CHECK(mui_anim_done(&a) && mui_anim_value(&a) == 55, "补间：零时长应立即到位");
+
+        mui_anim_start(&a, 0, 100, 100);
+        mui_anim_update(&a, 30);
+        mui_anim_stop(&a);
+        CHECK(mui_anim_done(&a), "补间：stop 后应完成");
+        mui_anim_jump(&a, 7);
+        CHECK(mui_anim_value(&a) == 7, "补间：jump 应立即设值");
+    }
+
+    /* 6) 时间基（含 32 位回绕） */
+    mui_tick_update(1000);
+    mui_tick_update(1033);
+    CHECK(mui_tick_delta() == 33, "时间基：毫秒差应为 33");
+    CHECK(mui_time_ms() == 1033, "时间基：当前时刻应为 1033");
+    mui_tick_update(0xFFFFFFF0u);
+    mui_tick_update(0x00000010u);                  /* 回绕：+32ms */
+    CHECK(mui_tick_delta() == 32, "时间基：32 位回绕后差值应为 32");
+}
+
+/* -------- 测试：文本居中 / 对齐 -------- */
+static void test_text_align(void)
+{
+    int16_t tw = mui_text_width("12", &lv_mono_font, 1);   /* 等宽 4px/字 → 8 */
+
+    mui_reset_clip();
+    CHECK(tw == 8, "对齐：测试字体 '12' 宽应为 8");
+    CHECK(mui_text_align_x(10, 40, tw, MUI_ALIGN_LEFT) == 10, "对齐：左");
+    CHECK(mui_text_align_x(10, 40, tw, MUI_ALIGN_CENTER) == 26, "对齐：居中");
+    CHECK(mui_text_align_x(10, 40, tw, MUI_ALIGN_RIGHT) == 42, "对齐：右");
+    CHECK(mui_text_align_x(10, 5, 20, MUI_ALIGN_CENTER) == 10,
+          "对齐：文本超框时应退化为左对齐");
+    CHECK(mui_text_align_y(10, 20, 8) == 16, "对齐：垂直居中");
+
+    /* 左对齐：字形首像素列在 tx+1（'1' 第 0 行 = {0,255,0}），首行在 ty+1 = 17 */
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_rect(10, 10, 40, 20, "12", &lv_mono_font,
+                       MUI_BLACK, TEST_BG, 1, MUI_ALIGN_LEFT);
+    CHECK(px(11, 17) == MUI_BLACK, "对齐：左对齐字形落点");
+    CHECK(px(11, 16) == TEST_BG, "对齐：垂直居中上方留白");
+    CHECK(px(27, 17) == TEST_BG, "对齐：左对齐不应出现在居中位置");
+
+    /* 居中 */
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_rect(10, 10, 40, 20, "12", &lv_mono_font,
+                       MUI_BLACK, TEST_BG, 1, MUI_ALIGN_CENTER);
+    CHECK(px(27, 17) == MUI_BLACK, "对齐：居中字形落点");
+    CHECK(px(11, 17) == TEST_BG, "对齐：居中时左侧应为空");
+
+    /* 右对齐 */
+    mui_screen_clear(TEST_BG);
+    mui_text_draw_rect(10, 10, 40, 20, "12", &lv_mono_font,
+                       MUI_BLACK, TEST_BG, 1, MUI_ALIGN_RIGHT);
+    CHECK(px(43, 17) == MUI_BLACK, "对齐：右对齐字形落点");
+
+    /* 标签对齐：改文本后重新居中，且旧落点被擦除 */
+    {
+        static mui_label_t lbl;
+        mui_screen_clear(TEST_BG);
+        mui_label_init(&lbl, 10, 10, &lv_mono_font, MUI_BLACK, TEST_BG, 1);
+        mui_label_set_align(&lbl, MUI_ALIGN_CENTER, 40);
+        mui_label_set_text(&lbl, "12");            /* 居中起点 26 */
+        CHECK(px(27, 11) == MUI_BLACK, "对齐：标签居中落点");
+
+        mui_label_set_text(&lbl, "123");           /* 宽 12 → 居中起点 24 */
+        CHECK(px(25, 11) == MUI_BLACK, "对齐：标签变长后应重新居中");
+        CHECK(px(27, 11) == TEST_BG, "对齐：旧落点应被擦除");
+    }
+
+    mui_reset_clip();
+}
+
+/* -------- 测试：容器与布局 -------- */
+static void test_layout(void)
+{
+    static mui_container_t c;
+    static mui_container_t a, b;
+    mui_layout_t l;
+    mui_rect_t r;
+
+    /* 容器：裁剪到矩形 */
+    mui_reset_clip();
+    mui_screen_clear(TEST_BG);
+    mui_container_init(&c, 50, 50, 40, 30);
+    mui_container_begin(&c);
+    mui_rect_fill(0, 0, 480, 480, MUI_RED);      /* 只应落在容器内 */
+    mui_container_end(&c);
+
+    CHECK(px(50, 50) == MUI_RED, "容器：区域内绘制生效");
+    CHECK(px(89, 79) == MUI_RED, "容器：区域右下角");
+    CHECK(px(49, 60) == TEST_BG, "容器：左侧区域外未写");
+    CHECK(px(90, 60) == TEST_BG, "容器：右侧区域外未写");
+    CHECK(px(60, 80) == TEST_BG, "容器：下方区域外未写");
+
+    /* 容器：滚动钳制 */
+    mui_container_set_content(&c, 0, 100);        /* 内容 100 > 视口 30 */
+    CHECK(mui_container_scroll_max_y(&c) == 70, "容器：最大滚动量");
+    CHECK(mui_container_scroll_max_x(&c) == 0, "容器：宽度不滚");
+    mui_container_set_scroll(&c, 0, 999);
+    CHECK(mui_container_oy(&c) == (int16_t)(50 - 70), "容器：滚动被钳制");
+
+    /* 嵌套容器：内层不得越出外层 */
+    mui_screen_clear(TEST_BG);
+    mui_container_init(&a, 100, 100, 60, 60);
+    mui_container_init(&b, 150, 150, 60, 60);    /* 与外层部分重叠 */
+    mui_container_begin(&a);
+    mui_container_begin(&b);
+    mui_rect_fill(0, 0, 480, 480, MUI_BLUE);
+    mui_container_end(&b);
+    mui_container_end(&a);
+    CHECK(px(150, 150) == MUI_BLUE, "容器：嵌套交集内生效");
+    CHECK(px(159, 159) == MUI_BLUE, "容器：嵌套交集右下角");
+    CHECK(px(160, 160) == TEST_BG, "容器：外层边界外未写");
+
+    /* 行布局 + 换行 */
+    mui_layout_init(&l, 0, 0, 100, 100, MUI_LAYOUT_ROW, 10);
+    r = mui_layout_next(&l, 40, 20);
+    CHECK(r.x == 0 && r.y == 0 && r.x2 == 40 && r.y2 == 20, "布局：行首格");
+    r = mui_layout_next(&l, 40, 20);
+    CHECK(r.x == 50 && r.y == 0, "布局：行第二格（含间距）");
+    r = mui_layout_next(&l, 40, 20);             /* 50+40 > 100 → 换行 */
+    CHECK(r.x == 0 && r.y == 30 && r.y2 == 50, "布局：放不下时换行");
+
+    /* 列布局 + 占满宽度 */
+    mui_layout_init(&l, 10, 10, 80, 60, MUI_LAYOUT_COL, 4);
+    r = mui_layout_next(&l, 0, 20);
+    CHECK(r.x == 10 && (r.x2 - r.x) == 80 && (r.y2 - r.y) == 20,
+          "布局：列布局占满宽度");
+
+    /* 超出区域 → 空矩形 */
+    CHECK(mui_layout_next(&l, 0, 999).x2 == 0, "布局：放不下返回空");
+
+    /* 等分 */
+    r = mui_layout_cols(0, 0, 100, 10, 4, 0, 0);
+    CHECK(r.x == 0 && r.x2 == 25, "布局：四等分第 0 列");
+    r = mui_layout_cols(0, 0, 100, 10, 4, 3, 0);
+    CHECK(r.x == 75 && r.x2 == 100, "布局：四等分末列贴右边");
+    r = mui_layout_rows(0, 0, 10, 90, 3, 1, 0);
+    CHECK(r.y == 30 && r.y2 == 60, "布局：三等分中间行");
+
+    /* 网格 */
+    r = mui_layout_grid(0, 0, 100, 100, 2, 2, 1, 1, 10);
+    CHECK(r.x == 55 && r.y == 55 && r.x2 == 100 && r.y2 == 100, "布局：网格右下单元");
+
+    /* 矩形工具 */
+    {
+        mui_rect_t box;
+        box.x = 10; box.y = 10; box.x2 = 110; box.y2 = 60;
+        r = mui_rect_pad(box, 5);
+        CHECK(r.x == 15 && r.y == 15 && r.x2 == 105 && r.y2 == 55, "布局：内缩");
+        r = mui_rect_align(box, 20, 10, MUI_ALIGN_CENTER);
+        CHECK(r.x == 50 && r.y == 30 && r.x2 == 70 && r.y2 == 40, "布局：居中放置");
+        r = mui_rect_align(box, 20, 10, MUI_ALIGN_RIGHT);
+        CHECK(r.x2 == 110, "布局：右对齐贴右边");
+        CHECK(mui_rect_hit(box, 10, 10) == 1 && mui_rect_hit(box, 110, 10) == 0,
+              "布局：命中测试（开区间）");
+    }
+
+    mui_reset_clip();
+}
+
+/* -------- 测试：仪表盘 -------- */
+static void test_gauge(void)
+{
+    static const mui_gauge_style_t st = {
+        MUI_RGB565(0x33, 0x3D, 0x4E),   /* track */
+        MUI_RED,                        /* fill */
+        MUI_WHITE,                      /* text */
+        MUI_WHITE,                      /* bg */
+        20,                             /* thick */
+        0, 360,                         /* a0 / a1：整圆便于断言 */
+        0,                              /* aa 关：纯色好断言（两种构型一致） */
+        0, 0                            /* 不显示数值 */
+    };
+    static mui_gauge_t g;
+    const uint16_t track = MUI_RGB565(0x33, 0x3D, 0x4E);
+
+    mui_reset_clip();
+    mui_screen_clear(MUI_WHITE);
+    mui_gauge_init(&g, 100, 100, 60, 0, 100, 50, &st);
+    mui_gauge_draw(&g);
+
+    /* 外半径 60、环宽 20 → 环带 [40,60)；50% = 扫到 180°（下半平面） */
+    CHECK(px(100, 150) == MUI_RED, "仪表盘：50% 时 90° 方向应为填充色");
+    CHECK(px(150, 100) == MUI_RED, "仪表盘：50% 时 0° 方向应为填充色");
+    CHECK(px(100, 50) == track, "仪表盘：270° 方向应为轨道色");
+    CHECK(px(100, 100) == MUI_WHITE, "仪表盘：内孔不填充");
+    CHECK(px(100, 165) == MUI_WHITE, "仪表盘：环外不填充");
+
+    /* 值 → 角度映射 */
+    CHECK(mui_gauge_value_angle(&g, 0) == 0, "仪表盘：0 值 → 0°");
+    CHECK(mui_gauge_value_angle(&g, 50) == 180, "仪表盘：50 值 → 180°");
+    CHECK(mui_gauge_value_angle(&g, 100) == 360, "仪表盘：100 值 → 360°");
+    CHECK(mui_gauge_value_angle(&g, 999) == 360, "仪表盘：超范围值被夹取");
+
+    /* 值未变 → 跳过重绘 */
+    mui_rect_fill(145, 100, 10, 10, MUI_GREEN);
+    mui_gauge_draw(&g);
+    CHECK(px(150, 105) == MUI_GREEN, "仪表盘：值未变时应跳过重绘");
+
+    /* 值改变 → 重绘 */
+    mui_gauge_set_value(&g, 100);
+    mui_gauge_draw(&g);
+    CHECK(px(100, 50) == MUI_RED, "仪表盘：值满时应整环填充");
+
+    mui_reset_clip();
+}
+
+/* -------- 测试：可滚动列表 -------- */
+static void test_list_widget(void)
+{
+    static mui_list_t l;
+    uint8_t first = 0, count = 0, idx = 0, chg;
+
+    mui_reset_clip();
+    mui_screen_clear(TEST_BG);
+    mui_list_init(&l, 0, 0, 100, 60, 20, 0);       /* 节距 20 → 视口内约 3 行 */
+    mui_list_set_rows(&l, 10);
+
+    CHECK(mui_list_get_rows(&l) == 10, "列表：行数");
+    CHECK(mui_list_max_scroll(&l) == 140, "列表：最大滚动量");
+    CHECK(mui_list_visible(&l, &first, &count) == 3 && first == 0,
+          "列表：初始可见 3 行");
+
+    mui_list_set_scroll(&l, 25);
+    CHECK(mui_list_get_scroll(&l) == 25, "列表：滚动设置");
+    mui_list_visible(&l, &first, &count);
+    CHECK(first == 1 && count == 4, "列表：滚动后可见范围（与视口相交的行）");
+
+    mui_list_set_scroll(&l, 9999);
+    CHECK(mui_list_get_scroll(&l) == mui_list_max_scroll(&l), "列表：滚动越界被钳制");
+    mui_list_set_scroll(&l, -100);
+    CHECK(mui_list_get_scroll(&l) == 0, "列表：负滚动被钳制");
+
+    /* 行矩形随滚动偏移 */
+    {
+        mui_rect_t r = mui_list_row_rect(&l, 1);
+        CHECK(r.y == 20 && r.y2 == 40, "列表：行矩形");
+        mui_list_set_scroll(&l, 10);
+        r = mui_list_row_rect(&l, 1);
+        CHECK(r.y == 10, "列表：滚动后行矩形上移");
+        mui_list_set_scroll(&l, 0);
+    }
+
+    /* 命中 */
+    CHECK(mui_list_row_at(&l, 50, 25, &idx) == 1 && idx == 1, "列表：命中第 1 行");
+    CHECK(mui_list_row_at(&l, 50, 200, &idx) == 0, "列表：视口外不命中");
+
+    /* 触摸：点按选中 */
+    mui_list_set_sel(&l, MUI_LIST_SEL_NONE);
+    mui_touch_update(50, 25, 1);
+    CHECK(mui_list_touch(&l, MUI_TOUCH_DOWN) == 0, "列表：按下不改选中");
+    mui_touch_update(50, 25, 0);
+    chg = mui_list_touch(&l, MUI_TOUCH_CLICK);
+    CHECK((chg & MUI_LIST_CHANGED_SEL) != 0 && mui_list_get_sel(&l) == 1,
+          "列表：点按选中第 1 行");
+
+    /* 触摸：拖动滚动 */
+    mui_list_set_scroll(&l, 50);
+    mui_touch_update(50, 40, 1);
+    (void)mui_list_touch(&l, MUI_TOUCH_DOWN);
+    mui_touch_update(50, 20, 1);                   /* 上滑 20px */
+    chg = mui_list_touch(&l, MUI_TOUCH_MOVE);
+    CHECK((chg & MUI_LIST_CHANGED_SCROLL) != 0 && mui_list_get_scroll(&l) == 70,
+          "列表：上滑使内容上移");
+    mui_touch_update(50, 20, 0);
+    (void)mui_list_touch(&l, MUI_TOUCH_UP);
+
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+    mui_reset_clip();
+}
+
+/* -------- 测试：模态弹窗 -------- */
+static void test_popup(void)
+{
+    static mui_popup_t p;
+
+    mui_reset_clip();
+    mui_screen_clear(MUI_WHITE);
+    mui_popup_init(&p, 60, 60, 200, 120, NULL, NULL, NULL);
+    mui_popup_set_colors(&p, MUI_NAVY, MUI_WHITE, MUI_WHITE, MUI_WHITE);
+    CHECK(mui_popup_add_button(&p, "OK", NULL) == 0, "弹窗：加按钮 0");
+    CHECK(mui_popup_add_button(&p, "NO", NULL) == 1, "弹窗：加按钮 1");
+    CHECK(mui_popup_is_open(&p) == 0, "弹窗：初始关闭");
+
+    mui_popup_open(&p);
+    CHECK(mui_popup_is_open(&p) == 1, "弹窗：已打开");
+    mui_popup_draw(&p);
+    CHECK(px(160, 80) == MUI_NAVY, "弹窗：面板已绘制");
+    CHECK(px(20, 20) == MUI_WHITE, "弹窗：面板外不受影响");
+
+    /* 点第二个按钮 → 返回索引 1 并关闭 */
+    {
+        int8_t r;
+        mui_touch_update(210, 160, 1);             /* 底部按钮行右侧 */
+        (void)mui_popup_touch(&p, MUI_TOUCH_DOWN);
+        mui_touch_update(210, 160, 0);
+        r = mui_popup_touch(&p, MUI_TOUCH_CLICK);
+        CHECK(r == 1, "弹窗：点第二个按钮应返回索引 1");
+        CHECK(mui_popup_is_open(&p) == 0, "弹窗：点按钮后关闭");
+    }
+
+    /* 点面板外 → MUI_POPUP_CLOSED */
+    mui_popup_open(&p);
+    mui_touch_update(10, 10, 1);
+    mui_touch_update(10, 10, 0);
+    CHECK(mui_popup_touch(&p, MUI_TOUCH_CLICK) == MUI_POPUP_CLOSED,
+          "弹窗：点面板外应取消关闭");
+    CHECK(mui_popup_is_open(&p) == 0, "弹窗：点外部后关闭");
+
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+    mui_reset_clip();
+}
+
+/* -------- 测试：下拉框 -------- */
+static void test_dropdown(void)
+{
+    static mui_dropdown_t d;
+    static const char *const items[4] = { "A", "B", "C", "D" };
+
+    mui_reset_clip();
+    mui_screen_clear(MUI_WHITE);
+    mui_dropdown_init(&d, 20, 20, 120, 24, items, 4, 20, NULL, NULL);
+    CHECK(mui_dropdown_is_open(&d) == 0 && mui_dropdown_selected(&d) == 0,
+          "下拉：初始状态");
+
+    /* 点按钮 → 展开 */
+    mui_touch_update(60, 30, 1);
+    mui_touch_update(60, 30, 0);
+    CHECK(mui_dropdown_touch(&d, MUI_TOUCH_CLICK) == MUI_DROPDOWN_CHANGED,
+          "下拉：点按钮应展开");
+    CHECK(mui_dropdown_is_open(&d) == 1, "下拉：已展开");
+
+    /* 展开列表矩形有效 */
+    {
+        mui_rect_t r;
+        CHECK(mui_dropdown_popup_rect(&d, &r) == 1, "下拉：展开矩形有效");
+        CHECK(r.y == 44 && (r.y2 - r.y) == 80, "下拉：展开列表位于按钮下方");
+    }
+
+    /* 点第 3 项（索引 2）→ 选中并收起 */
+    {
+        mui_rect_t r;
+        int16_t py;
+        uint8_t res;
+        (void)mui_dropdown_popup_rect(&d, &r);
+        py = (int16_t)(r.y + 2 * 20 + 10);
+        mui_touch_update(60, py, 1);
+        (void)mui_dropdown_touch(&d, MUI_TOUCH_DOWN);
+        mui_touch_update(60, py, 0);
+        res = mui_dropdown_touch(&d, MUI_TOUCH_CLICK);
+        CHECK(res == MUI_DROPDOWN_CLOSED, "下拉：选中后应收起");
+        CHECK(mui_dropdown_selected(&d) == 2, "下拉：选中的是第 3 项");
+        CHECK(mui_dropdown_is_open(&d) == 0, "下拉：已收起");
+    }
+
+    /* 点外部 → 收起 */
+    mui_dropdown_open(&d);
+    mui_touch_update(400, 400, 1);
+    mui_touch_update(400, 400, 0);
+    CHECK(mui_dropdown_touch(&d, MUI_TOUCH_CLICK) == MUI_DROPDOWN_CLOSED,
+          "下拉：点外部应收起");
+
+    while (mui_touch_poll() != MUI_TOUCH_NONE) { }
+    mui_reset_clip();
+}
+
+/* -------- 测试：滑块圆头与填充的交界（底色必须按方向分开判） -------- */
+
+/**
+ * 旧实现把"圆头像素底下压的是什么颜色"按水平条的逻辑（圆心左=填充、右=轨道）
+ * 硬套到垂直条上。垂直条是**自下而上**填充，圆头正下方才是填充色，于是圆头
+ * 正下方整条带被当成"轨道色/页面底色"，与填充的交界混出一条暗线。
+ *
+ * 这里用"填充色 == 圆头边色"的配色（demo 里就是这么配的）做精确断言：
+ * 交界处若没有混错底色，混色结果必须仍等于填充色本身。
+ */
+static void test_slider_rim(void)
+{
+    mui_slider_style_t st = mui_slider_style_default;
+    mui_slider_t s;
+    mui_rect_t b;
+    const uint16_t fill = MUI_RGB565(0x2E, 0xCC, 0x71);
+    int16_t kr = 13, cx, cy;
+
+    st.track       = MUI_RGB565(0x33, 0x3D, 0x4E);
+    st.fill        = fill;
+    st.knob        = MUI_WHITE;
+    st.knob_border = fill;        /* 与填充同色：交界处应完全无缝 */
+    st.screen_bg   = MUI_BLACK;   /* 与填充反差极大，混错底色立刻现形 */
+    st.thickness   = 10;
+    st.knob_r      = kr;
+    st.aa          = 1;
+
+    /* ---- 垂直：圆头下边缘必须仍是填充色（不得混出暗线） ---- */
+    st.dir = MUI_SLIDER_VERTICAL;
+    mui_screen_clear(MUI_BLACK);
+    mui_slider_init(&s, 100, 100, 30, 96, 0, 100, 40, &st);
+    mui_slider_draw(&s);
+
+    cx = (int16_t)(s.x + s.w / 2);
+    cy = (int16_t)(s.y + (s.h - 1 - 38));   /* 值 40：pos 距顶部 (96-1)*40/100 行 */
+
+    CHECK(mui_slider_get_bounds(&s, &b) == 1, "滑块：get_bounds 应返回成功");
+    CHECK(b.x == (int16_t)(cx - kr - 1) && b.y == (int16_t)(s.y - kr) &&
+          b.x2 == (int16_t)(b.x + 2 * kr + 3) &&
+          b.y2 == (int16_t)(s.y + s.h + kr),
+          "滑块：占位矩形未按圆头半径外扩（相邻控件会被擦掉一条）");
+
+    CHECK(px(cx, (int16_t)(cy + kr)) == fill,
+          "垂直滑块：圆头下边缘与填充之间混出暗线（底色按左右分而非上下分）");
+    CHECK(px((int16_t)(cx + 2), (int16_t)(cy + kr)) == fill,
+          "垂直滑块：圆头右下角与填充之间混出暗线");
+
+    /* ---- 水平：左侧交界仍是填充色（该方向本来就是对的，防止被改坏） ---- */
+    st.dir = MUI_SLIDER_HORIZONTAL;
+    mui_screen_clear(MUI_BLACK);
+    mui_slider_init(&s, 100, 100, 104, 30, 0, 100, 65, &st);
+    mui_slider_draw(&s);
+
+    cx = (int16_t)(s.x + (104 - 1) * 65 / 100);
+    cy = (int16_t)(s.y + s.h / 2);
+    CHECK(px((int16_t)(cx - kr), cy) == fill,
+          "水平滑块：圆头左边缘与填充之间混出暗线");
+}
+
+/* -------- 测试：仪表盘中心数值重绘必须擦掉旧值 -------- */
+
+/** @brief 统计矩形内非背景色像素数（只用于内孔这种小区域） */
+static int count_non_bg(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                        uint16_t bg)
+{
+    int16_t x, y;
+    int n = 0;
+
+    for (y = y0; y < y1; y++) {
+        for (x = x0; x < x1; x++) {
+            if (px(x, y) != bg) {
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+/**
+ * 中心内孔在圆环的覆盖范围之外，重画圆环擦不掉旧数字。旧实现每次改值都
+ * 直接把新数字画上去，于是新旧数值叠成一团（数字宽度一变尤其明显）。
+ *
+ * 用例：先画 "12"（两位）再画 "3"（一位），内孔里的非底色像素数必须与
+ * "干净底上直接画 3"完全一致 —— 多出来的就是没擦掉的旧值残留。
+ */
+static void test_gauge_value_repaint(void)
+{
+    mui_gauge_style_t st = mui_gauge_style_default;
+    mui_gauge_t g;
+    const uint16_t bg = MUI_BLACK;
+    const int16_t cx = 200, cy = 200, r = 60;
+    int16_t rin = 45;            /* r - thick */
+    int ref, got;
+
+    st.track      = MUI_RGB565(0x33, 0x3D, 0x4E);
+    st.fill       = MUI_RGB565(0x04, 0xAA, 0xF4);
+    st.text       = MUI_WHITE;
+    st.bg         = bg;
+    st.thick      = 15;
+    st.aa         = 0;           /* 关 AA：边缘颜色确定，统计更干净 */
+    st.show_value = 1;
+    st.percent    = 0;           /* 走原值分支：测试字体只有 '1'~'3' */
+
+    /* 参考：干净底上直接画 "3" */
+    mui_screen_clear(bg);
+    mui_gauge_init(&g, cx, cy, r, 0, 99, 3, &st);
+    mui_gauge_set_font(&g, &lv_mono_font);
+    mui_gauge_draw(&g);
+    ref = count_non_bg((int16_t)(cx - 30), (int16_t)(cy - 30),
+                       (int16_t)(cx + 30), (int16_t)(cy + 30), bg);
+
+    /* 先 "12" 后 "3"：旧值必须被擦掉 */
+    mui_screen_clear(bg);
+    mui_gauge_init(&g, cx, cy, r, 0, 99, 12, &st);
+    mui_gauge_set_font(&g, &lv_mono_font);
+    mui_gauge_draw(&g);
+    mui_gauge_set_value(&g, 3);
+    mui_gauge_draw(&g);
+    got = count_non_bg((int16_t)(cx - 30), (int16_t)(cy - 30),
+                       (int16_t)(cx + 30), (int16_t)(cy + 30), bg);
+
+    CHECK(rin > 30, "仪表盘：用例前提被破坏（内孔太小，取样区会碰到圆环）");
+    CHECK(ref > 0, "仪表盘：参考数值没画出来（测试字体用例失效）");
+    CHECK(got == ref, "仪表盘：改值后中心残留旧数字（内孔未擦，新旧数值叠字）");
+
+    /* 关掉数值显示后，旧数字也要被清掉 */
+    st.show_value = 0;
+    mui_gauge_set_style(&g, &st);    /* 顺带作废绘制状态，强制走全流程 */
+    mui_gauge_draw(&g);
+    CHECK(count_non_bg((int16_t)(cx - 30), (int16_t)(cy - 30),
+                       (int16_t)(cx + 30), (int16_t)(cy + 30), bg) == 0,
+          "仪表盘：关掉数值显示后中心仍残留旧数字");
 }
 
 int main(void)
@@ -1520,6 +2776,19 @@ int main(void)
     mui_init(SIM_W, SIM_H);
 
     test_clipping();
+    test_clip_region();
+    test_clip_mask();
+    test_dirty();
+    test_slider_rim();
+    test_gauge_value_repaint();
+    test_button_cache();
+    test_anim();
+    test_text_align();
+    test_layout();
+    test_gauge();
+    test_list_widget();
+    test_popup();
+    test_dropdown();
     test_rect();
     test_round_rect();
     test_line();
@@ -1535,12 +2804,27 @@ int main(void)
     test_text_cell_matches_sparse();
     test_label_decor();
     test_label_colors();
+#if MUI_CFG_AA
     test_round_rect_aa();
     test_round_rect_aa_bg();
     test_round_rect_draw_aa();
     test_progressbar_aa();
     test_progressbar_track_aa();
     test_progressbar_full_cover();
+    test_button_aa();
+#else
+    /* 全局关 AA 时跳过所有"抗锯齿形状"相关断言；引用一下避免"定义未使用"告警 */
+    (void)test_round_rect_aa; (void)test_round_rect_aa_bg;
+    (void)test_round_rect_draw_aa; (void)test_progressbar_aa;
+    (void)test_progressbar_track_aa; (void)test_progressbar_full_cover;
+    (void)test_button_aa;
+#endif
+    test_ring();
+    test_button_image();
+    test_image_scale_nine();
+    test_slider();
+    test_slider_trail();
+    test_toggle();
 
     render_demo();
 

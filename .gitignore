@@ -32,3 +32,9 @@ __pycache__/
 # -------- 系统文件 --------
 Thumbs.db
 .DS_Store
+
+# -------- 截图产物（可由 mui_demo_shot / mui_demo_shot_strip 重新生成） --------
+demo_shot*.png
+
+# -------- AI 图片工具的输出目录 --------
+generated-images/

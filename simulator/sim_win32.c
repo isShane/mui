@@ -19,7 +19,7 @@
 #include "sim_config.h"
 #include "sim_host.h"
 
-#define SCALE   1   /**< 窗口放大倍数（改为 2 可放大观察像素细节） */
+#define SCALE   2  /**< 窗口放大倍数（改为 2 可放大观察像素细节，窗口会同步变大） */
 #define FPS_MS  1   /**< 刷新间隔（毫秒） */
 
 static unsigned char *rgb_buf = NULL;           /**< RGB888 转换缓冲 */

@@ -77,6 +77,79 @@ int16_t mui_screen_get_width(void);
 /** @brief 获取屏幕高度 */
 int16_t mui_screen_get_height(void);
 
+/* -------- 绘制裁剪区 -------- */
+
+/** @brief 矩形区域（开区间：x <= px < x2，y <= py < y2） */
+typedef struct {
+    int16_t x;    /**< 左边界（含） */
+    int16_t y;    /**< 上边界（含） */
+    int16_t x2;   /**< 右边界（不含） */
+    int16_t y2;   /**< 下边界（不含） */
+} mui_rect_t;
+
+/**
+ * @brief 设置绘制裁剪区：之后所有图元的写入都被限制在本矩形内
+ *
+ * 裁剪区自动与屏幕求交（越界参数安全）；宽度或高度 < 1 时裁剪区为空，
+ * 其后的绘制全部丢弃。初始状态为全屏，由 mui_init() 复位。
+ * @note  嵌套使用时用 mui_clip_save / mui_clip_restore 保存与恢复。
+ *        mui_screen_clear() 也受裁剪区限制（只清裁剪区内），需要真清全屏
+ *        请先 mui_reset_clip()。
+ * @param x 左边界
+ * @param y 上边界
+ * @param w 宽度（<1 时裁剪区为空）
+ * @param h 高度（<1 时裁剪区为空）
+ */
+void mui_set_clip(int16_t x, int16_t y, int16_t w, int16_t h);
+
+/** @brief 恢复裁剪区为全屏 */
+void mui_reset_clip(void);
+
+/** @brief 保存当前裁剪区（返回值在栈上，不占静态 RAM） */
+mui_rect_t mui_clip_save(void);
+
+/**
+ * @brief 恢复之前保存的裁剪区（与 mui_clip_save 配对，支持任意层嵌套）
+ * @param c 之前保存的裁剪区
+ */
+void mui_clip_restore(mui_rect_t c);
+
+/* -------- 脏矩形跟踪 --------
+ * 记录"本帧哪些区域被写过"，用于按需重绘 / 局部刷新。
+ * 不变式：脏区列表的并集始终覆盖所有被实际写入的像素（可以多报，绝不漏报）。
+ * 编译期开关 MUI_CFG_DIRTY_N（见 mui_conf.h）：0 时下列 API 全部恒返回 0。
+ */
+
+/** @brief 清空脏区列表（通常在每帧绘制前调用） */
+void mui_dirty_clear(void);
+
+/**
+ * @brief 主动标记一块区域为脏（同样受裁剪区限制）
+ * @param x 左边界
+ * @param y 上边界
+ * @param w 宽度
+ * @param h 高度
+ */
+void mui_dirty_mark(int16_t x, int16_t y, int16_t w, int16_t h);
+
+/** @brief 当前脏区数量（MUI_CFG_DIRTY_N 为 0 时恒返回 0） */
+uint8_t mui_dirty_count(void);
+
+/**
+ * @brief 取出第 idx 个脏区
+ * @param idx 下标（0 ~ mui_dirty_count()-1）
+ * @param r   输出：脏区矩形
+ * @return 1=成功，0=下标越界或功能关闭
+ */
+uint8_t mui_dirty_get(uint8_t idx, mui_rect_t *r);
+
+/**
+ * @brief 把所有脏区合并为单个包围盒
+ * @param r 输出：包围盒
+ * @return 1=本帧有变化，0=无变化（或功能关闭）
+ */
+uint8_t mui_dirty_bounds(mui_rect_t *r);
+
 /* -------- 输出提交 -------- */
 
 #if MUI_CFG_HAS_BUFFER
@@ -91,6 +164,48 @@ void mui_screen_flush(void);
 #else
 #define mui_screen_flush()  ((void)0)
 #endif
+
+/* -------- 整帧绘制通道（条带后端必须走这里） -------- */
+
+/** @brief 一帧的绘制回调（ctx 由调用方透传，可为 NULL） */
+typedef void (*mui_draw_fn)(void *ctx);
+
+/**
+ * @brief 绘制一整帧：把绘制动作交给当前输出后端
+ *
+ * 直绘 / 全屏单缓冲 / 双缓冲：回调被调用 **1 次**，随后（缓冲后端）自动推屏；
+ * 条带缓冲：回调被调用 **N 次**（N = 屏高 / 带高），每次回调前库会把裁剪区
+ * 收窄到当前条带并平移输出，回调结束后推送该带。
+ *
+ * @param draw 绘制回调；必须能把整屏内容**从头画满**（先铺底色再画各控件），
+ *             因为它会被反复调用。回调内可以照常调 mui_screen_clear /
+ *             mui_set_clip / 容器 begin-end；**不要**在里面改动画/输入状态
+ *             （那部分应在回调外、每帧只做一次）。
+ * @param ctx  透传给 draw 的上下文，可为 NULL
+ *
+ * @note 条带模式下传给回调的"全屏"就是当前条带：mui_reset_clip() 恢复的是
+ *       条带而不是整屏，所以在回调开头调用它（并接着铺满底色）是正确的用法。
+ * @note 条带模式下，控件必须在回调内绘制：条形模式把各控件的 set_* 视为
+ *       "只改状态"，绘制统一发生在回调里，且**每次都全量重绘**（不做增量/缓存跳过）。
+ * @note 直绘与条带后端下本函数不需要额外的 mui_screen_flush()；非条带后端
+ *       内部已代劳。为兼容既有代码，回调外再调一次 mui_screen_flush() 无害。
+ */
+void mui_screen_frame(mui_draw_fn draw, void *ctx);
+
+#if MUI_CFG_IS_STRIP
+/**
+ * @brief 设置条带高度（行数）——调小可省 RAM/调大减少重放遍数
+ * @param h 期望带高；自动夹到 [1, MUI_CFG_STRIP_H]
+ * @note  仅在条带后端有效；其它后端为空操作。
+ */
+void mui_strip_set_height(int16_t h);
+
+/** @brief 取当前条带高度（行数）；非条带后端返回 0 */
+int16_t mui_strip_get_height(void);
+#else
+#define mui_strip_set_height(h)     ((void)(h))
+#define mui_strip_get_height()      ((int16_t)0)
+#endif /* MUI_CFG_IS_STRIP */
 
 /* -------- 基础图元 -------- */
 
@@ -252,6 +367,39 @@ void mui_ellipse_fill(int16_t cx, int16_t cy, int16_t rx, int16_t ry,
 void mui_ellipse_draw(int16_t cx, int16_t cy, int16_t rx, int16_t ry,
                       uint16_t color);
 
+/* -------- 圆弧 / 圆环（起止角 + 粗细 + AA） -------- */
+
+/**
+ * @brief 实心圆环扇区（annular sector）：半径 [rin, rout]、角度 [a0, a1] 之间的填充
+ * @param cx,cy   圆心
+ * @param rin     内半径（<0 视作 0，得到实心扇形 pie）
+ * @param rout    外半径（须 > rin）
+ * @param a0,a1   起止角（度：0=+x 轴，顺时针为正即屏幕 y 向下；a1<=a0 视为跨 0° 加 360）
+ * @param color   填充色
+ * @note  角度范围跨越 360° 时视作整环（不判角度）。硬边，无抗锯齿。
+ */
+void mui_ring_fill(int16_t cx, int16_t cy, int16_t rin, int16_t rout,
+                   int16_t a0, int16_t a1, uint16_t color);
+
+/**
+ * @brief 描边圆弧：以 r 为中心线、thickness 为宽画弧 [a0, a1]，两端为圆头端帽
+ * @note  形状定义为 { 到"半径 r、角度[a0,a1] 的圆弧中心线"的距离 <= thickness/2 }，
+ *        因此 a1-a0>=360 时即为整环。硬边（无抗锯齿）。
+ */
+void mui_arc_draw(int16_t cx, int16_t cy, int16_t r, int16_t a0, int16_t a1,
+                  int16_t thickness, uint16_t color);
+
+/**
+ * @brief 抗锯齿版实心圆环扇区（基于有符号距离的覆盖率，内外弧边/两端径向边/拐角一致）
+ * @param fg,bg   前景色 / 混色底色（直绘后端须等于弧所压的真实底色）
+ */
+void mui_ring_fill_aa(int16_t cx, int16_t cy, int16_t rin, int16_t rout,
+                      int16_t a0, int16_t a1, uint16_t fg, uint16_t bg);
+
+/** @brief 抗锯齿版描边圆弧（圆头端帽，有符号距离抗锯齿；最适用于仪表盘进度弧） */
+void mui_arc_draw_aa(int16_t cx, int16_t cy, int16_t r, int16_t a0, int16_t a1,
+                     int16_t thickness, uint16_t fg, uint16_t bg);
+
 /* -------- 图片（位图资源） -------- */
 
 /** @brief RGB565 位图资源描述 */
@@ -311,6 +459,30 @@ typedef struct {
 void mui_image_draw_mask(int16_t x, int16_t y, int16_t w, int16_t h,
                            const uint8_t *data, uint16_t fg, uint16_t bg);
 
+/** @brief 最近邻缩放绘制 RGB565 位图（sw×sh 缩放到 dw×dh） */
+void mui_image_draw_scaled(int16_t x, int16_t y, int16_t dw, int16_t dh,
+                           int16_t sw, int16_t sh, const uint16_t *data);
+
+/** @brief 最近邻缩放绘制 + 色键透明（源像素等于 key 处不绘制） */
+void mui_image_draw_scaled_key(int16_t x, int16_t y, int16_t dw, int16_t dh,
+                               int16_t sw, int16_t sh, const uint16_t *data,
+                               uint16_t key);
+
+/**
+ * @brief 九宫格(9-slice)贴图：圆角/边框不变形地缩放到 w×h
+ * @param sw,sh 源图宽高
+ * @param l,t,r,b 四边"不缩放"的边框宽度（像素）；四角原样、四边单向拉伸、中心双向拉伸
+ */
+void mui_image_draw_nine(int16_t x, int16_t y, int16_t w, int16_t h,
+                         int16_t sw, int16_t sh, const uint16_t *data,
+                         int16_t l, int16_t t, int16_t r, int16_t b);
+
+/** @brief 九宫格 + 色键透明 */
+void mui_image_draw_nine_key(int16_t x, int16_t y, int16_t w, int16_t h,
+                             int16_t sw, int16_t sh, const uint16_t *data,
+                             int16_t l, int16_t t, int16_t r, int16_t b,
+                             uint16_t key);
+
 /* -------- 颜色混合与抗锯齿 --------
  * 命名约定：函数名后缀 _aa = anti-aliasing（抗锯齿版），与同名硬边版本成对存在。
  *   例：mui_circle_draw（硬边 1px 圆） / mui_circle_draw_aa（边缘与背景混合过渡）。
@@ -358,6 +530,10 @@ void mui_line_draw_aa(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
  * @param bg    背景 RGB565 颜色
  */
 void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
+                        uint16_t fg, uint16_t bg);
+
+/** @brief 抗锯齿实心圆（覆盖率与 bg 混色；关 AA 时退化为 mui_circle_fill） */
+void mui_circle_fill_aa(int16_t cx, int16_t cy, int16_t r,
                         uint16_t fg, uint16_t bg);
 
 /**

@@ -29,16 +29,26 @@
 /* -------- 各后端的缓冲与状态 -------- */
 
 #if MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL
+
 static uint16_t s_fb[MUI_CFG_BUF_MAX_W * MUI_CFG_BUF_MAX_H];
 #if MUI_CFG_DIRTY
 static uint8_t  s_dirty;                /**< 脏区是否有效 */
 static int16_t  s_dx0, s_dy0, s_dx1, s_dy1;  /**< 脏包围盒（半开区间） */
 #endif
 
-#else /* MUI_OUTPUT_FULL_DOUBLE */
+#elif MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL_DOUBLE
+
 static uint16_t s_fb[2][MUI_CFG_BUF_MAX_W * MUI_CFG_BUF_MAX_H];
 static uint16_t *s_back = s_fb[0];      /**< 后台缓冲：绘制目标 */
 static uint16_t *s_front = s_fb[1];     /**< 前台缓冲：刚推给屏的那块 */
+
+#else /* MUI_OUTPUT_STRIP：只留一条横带 */
+
+static uint16_t s_fb[MUI_CFG_BUF_MAX_W * MUI_CFG_STRIP_H];
+static int16_t  s_band_y = 0;                    /**< 当前带起始屏幕行（平移量） */
+static int16_t  s_band_h = MUI_CFG_STRIP_H;      /**< 当前带高（末带短于带高） */
+static int16_t  s_strip_h = MUI_CFG_STRIP_H;     /**< 运行期带高（<= 编译期上限） */
+
 #endif
 
 /* 绘制目标缓冲：双缓冲下是后台缓冲，其余后端就是唯一那块缓冲 */
@@ -51,7 +61,37 @@ static uint16_t *s_front = s_fb[1];     /**< 前台缓冲：刚推给屏的那�
 static int16_t s_w = 0;                 /**< 运行期有效宽度（<= 缓冲上限） */
 static int16_t s_h = 0;                 /**< 运行期有效高度 */
 
+/* -------- 内部：行寻址（条带后端做"屏幕 y → 缓冲行"平移） -------- */
+
+/** @brief 内部：屏幕行 y 对应的缓冲行首指针 */
+static uint16_t *out_row(int16_t y)
+{
+#if MUI_CFG_IS_STRIP
+    return &OUT_BUF[(size_t)(y - s_band_y) * (size_t)OUT_STRIDE];
+#else
+    return &OUT_BUF[(size_t)y * (size_t)OUT_STRIDE];
+#endif
+}
+
+/**
+ * @brief 内部：屏幕行 y 是否可写
+ *
+ * 条带后端只认当前带：带外的写入直接丢弃。正常路径下 mui_gfx.c 已按"当前条带"
+ * 裁剪过，这里是防御（例如调用方把帧外保存的裁剪区 restore 回来时）。
+ */
+static uint8_t out_row_ok(int16_t y)
+{
+#if MUI_CFG_IS_STRIP
+    return (uint8_t)(y >= s_band_y && y < (int16_t)(s_band_y + s_band_h));
+#else
+    (void)y;
+    return 1;
+#endif
+}
+
 /* -------- 内部：全屏后端 -------- */
+
+#if !MUI_CFG_IS_STRIP
 
 /** @brief 内部：把缓冲中指定屏幕矩形推给移植层 */
 static void out_push(int16_t x, int16_t y, int16_t w, int16_t h)
@@ -67,6 +107,8 @@ static void out_push(int16_t x, int16_t y, int16_t w, int16_t h)
                          OUT_STRIDE);
 #endif
 }
+
+#endif /* !MUI_CFG_IS_STRIP */
 
 #if (MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL) && MUI_CFG_DIRTY
 
@@ -124,9 +166,12 @@ void mui_out_init(void)
     if (s_w > (int16_t)MUI_CFG_BUF_MAX_W) {
         s_w = (int16_t)MUI_CFG_BUF_MAX_W;
     }
+#if !MUI_CFG_IS_STRIP
+    /* 条带后端只按"宽 × 带高"分配，屏高不受 MUI_CFG_BUF_MAX_H 约束 */
     if (s_h > (int16_t)MUI_CFG_BUF_MAX_H) {
         s_h = (int16_t)MUI_CFG_BUF_MAX_H;
     }
+#endif
 #if (MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL) && MUI_CFG_DIRTY
     s_dirty = 0;
 #endif
@@ -134,7 +179,10 @@ void mui_out_init(void)
 
 void mui_out_draw_pixel(int16_t x, int16_t y, uint16_t color)
 {
-    OUT_BUF[(size_t)y * OUT_STRIDE + x] = color;
+    if (!out_row_ok(y)) {
+        return;
+    }
+    out_row(y)[x] = color;
 #if MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL
 #if MUI_CFG_DIRTY
     out_dirty_add(x, y, 1, 1);
@@ -154,8 +202,12 @@ void mui_out_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h,
     y_end = (int16_t)(y + h);
 
     for (row = y; row < y_end; row++) {
-        uint16_t *dst = &OUT_BUF[(size_t)row * OUT_STRIDE + x];
+        uint16_t *dst;
 
+        if (!out_row_ok(row)) {
+            continue;
+        }
+        dst = out_row(row) + x;
         for (col = 0; col < w; col++) {
             dst[col] = color;
         }
@@ -180,7 +232,10 @@ void mui_out_draw_bitmap(int16_t x, int16_t y, int16_t w, int16_t h,
     y_end = (int16_t)(y + h);
 
     for (row = y; row < y_end; row++) {
-        memcpy(&OUT_BUF[(size_t)row * OUT_STRIDE + x],
+        if (!out_row_ok(row)) {
+            continue;
+        }
+        memcpy(out_row(row) + x,
                data + ((size_t)(row - y0) * (size_t)stride),
                (size_t)w * sizeof(uint16_t));
     }
@@ -196,7 +251,10 @@ uint16_t mui_out_read_pixel(int16_t x, int16_t y)
     if (x < 0 || y < 0 || x >= s_w || y >= s_h) {
         return 0;
     }
-    return OUT_BUF[(size_t)y * OUT_STRIDE + x];
+    if (!out_row_ok(y)) {
+        return 0;               /* 条带后端：带外像素不在缓冲里，视为"未知底色" */
+    }
+    return out_row(y)[x];
 }
 
 void mui_out_flush(void)
@@ -212,7 +270,7 @@ void mui_out_flush(void)
     out_push(0, 0, s_w, s_h);   /* 关脏区则整块推屏 */
 #endif
 
-#else /* MUI_OUTPUT_FULL_DOUBLE */
+#elif MUI_CFG_OUTPUT_MODE == MUI_OUTPUT_FULL_DOUBLE
     {
         uint16_t *tmp;
 
@@ -224,8 +282,56 @@ void mui_out_flush(void)
         memcpy(s_back, s_front,
                (size_t)OUT_STRIDE * (size_t)s_h * sizeof(uint16_t));
     }
+
+#else /* MUI_OUTPUT_STRIP：推屏由 mui_out_band_flush() 逐带完成 */
+    /* 空实现：条带模式下"帧末 flush"没有意义，保留以免既有代码报错 */
 #endif
 }
+
+/* -------- 条带后端：切带 / 推带 / 运行期带高 -------- */
+
+#if MUI_CFG_IS_STRIP
+
+void mui_out_band_begin(int16_t y, int16_t h)
+{
+    if (h > s_strip_h) {
+        h = s_strip_h;
+    }
+    if (h < 1) {
+        h = 1;
+    }
+    if (y < 0) {
+        y = 0;
+    }
+    s_band_y = y;
+    s_band_h = h;
+}
+
+void mui_out_band_flush(void)
+{
+    if (s_band_h < 1 || s_w < 1) {
+        return;
+    }
+    mui_port_draw_bitmap(0, s_band_y, s_w, s_band_h, s_fb, OUT_STRIDE);
+}
+
+void mui_strip_set_height(int16_t h)
+{
+    if (h < 1) {
+        h = 1;
+    }
+    if (h > (int16_t)MUI_CFG_STRIP_H) {
+        h = (int16_t)MUI_CFG_STRIP_H;
+    }
+    s_strip_h = h;
+}
+
+int16_t mui_strip_get_height(void)
+{
+    return s_strip_h;
+}
+
+#endif /* MUI_CFG_IS_STRIP */
 
 /* -------- 对外公共接口（mui.h 声明的 mui_screen_flush） -------- */
 

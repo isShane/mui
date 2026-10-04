@@ -311,7 +311,7 @@ static int16_t pb_repaint(const mui_progressbar_t *pb, int16_t f_old)
         pb->style ? pb->style : &mui_progressbar_style_default;
     int16_t r, ix, iy, iw, ih, ri, f_new, lo, hi, bw;
     uint8_t erase = 1;
-    uint8_t aa = (uint8_t)(s->aa ? 1 : 0);
+    uint8_t aa = (uint8_t)((s->aa && MUI_CFG_AA) ? 1 : 0);   /* 总开关可强制关 AA */
     uint8_t stroke;
 
     r = pb_radius(pb->w, pb->h, s);
@@ -411,6 +411,12 @@ void mui_progressbar_set_value(mui_progressbar_t *pb, uint8_t value)
     }
 
     pb->value = value;
+#if MUI_CFG_IS_STRIP
+    /* 条带后端：绘制只允许发生在每帧的绘制通道里（帧外写屏会污染条带缓冲），
+     * 故 set_* 只改状态，真正的重绘交给 mui_progressbar_draw */
+    pb->drawn = 1;
+    return;
+#endif
     if (!pb->visible) {
         return;
     }
@@ -427,6 +433,14 @@ void mui_progressbar_set_pos(mui_progressbar_t *pb, int16_t x, int16_t y)
 {
     const mui_progressbar_style_t *s;
 
+#if MUI_CFG_IS_STRIP
+    if (pb == NULL) {
+        return;
+    }
+    pb->x = x;                  /* 条带后端：只改状态，重绘交给 draw */
+    pb->y = y;
+    return;
+#endif
     if (pb == NULL || !pb->drawn) {
         return;
     }
@@ -445,6 +459,10 @@ void mui_progressbar_set_visible(mui_progressbar_t *pb, uint8_t visible)
         return;
     }
     pb->visible = visible ? 1 : 0;
+#if MUI_CFG_IS_STRIP
+    pb->drawn = pb->visible;    /* 条带后端：只改状态 */
+    return;
+#endif
     if (pb->visible) {
         pb->last_fill = pb_repaint(pb, -1);   /* 重新显示：全量重绘 */
         pb->drawn = 1;

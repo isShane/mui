@@ -46,6 +46,8 @@ typedef struct {
                                  *   新字形空腔/框外的像素不会被覆盖）。要"擦旧画新"请用
                                  *   mui_label_set_pos(自身坐标) 或 set_colors */
     uint8_t decor;              /**< 文字装饰（MUI_TEXT_* 位或，0 = 无） */
+    int16_t w;                  /**< 对齐参考框宽度（align != LEFT 时生效；<=0 视作左对齐） */
+    uint8_t align;              /**< 水平对齐（mui_align_t，默认 MUI_ALIGN_LEFT） */
 } mui_label_t;
 
 /**
@@ -60,6 +62,24 @@ typedef struct {
  */
 void mui_label_init(mui_label_t *lbl, int16_t x, int16_t y,
                     const mui_font_t *font, uint16_t fg, uint16_t bg, int16_t scale);
+
+/**
+ * @brief 设置水平对齐方式与参考框宽度
+ *
+ * 对齐后文本在 [x, x+w) 内按 align 摆放（x 仍取 lbl->x）：
+ *   MUI_ALIGN_LEFT   左对齐（默认，== 不用本接口）
+ *   MUI_ALIGN_CENTER 水平居中
+ *   MUI_ALIGN_RIGHT  右对齐
+ * w <= 0 或 align == MUI_ALIGN_LEFT 时退化为左对齐。
+ *
+ * @note 对齐模式下文本宽度变化会改变绘制起点，故 set_text 走"整块参考矩形擦除
+ *       + 整串重画"（不做逐字符增量）；需要更省写屏量的场合请用左对齐。
+ *       未绘制过则只记录，下次首绘生效。
+ * @param lbl   标签对象
+ * @param align 对齐方式（mui_align_t）
+ * @param w     参考框宽度（像素）
+ */
+void mui_label_set_align(mui_label_t *lbl, uint8_t align, int16_t w);
 
 /**
  * @brief 更新文本：从与上次文本的差异起点擦除并重画到行尾（无需记忆坐标）

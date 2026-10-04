@@ -69,6 +69,27 @@ uint16_t mui_out_read_pixel(int16_t x, int16_t y);
 
 #endif /* MUI_CFG_HAS_BUFFER */
 
+/* -------- 条带重放（仅条带后端有实体，其它后端编译期消除） -------- */
+
+#if MUI_CFG_IS_STRIP
+
+/**
+ * @brief 切到某条带：清带、并把"屏幕 y → 缓冲行"的平移量设为 y
+ * @param y 条带在屏幕上的起始行
+ * @param h 条带高度（行）
+ */
+void mui_out_band_begin(int16_t y, int16_t h);
+
+/** @brief 把当前条带整块推给移植层 */
+void mui_out_band_flush(void);
+
+#else
+
+#define mui_out_band_begin(y, h)    ((void)0)
+#define mui_out_band_flush()        ((void)0)
+
+#endif /* MUI_CFG_IS_STRIP */
+
 #ifdef __cplusplus
 }
 #endif

@@ -57,6 +57,28 @@ typedef struct {
 #define MUI_TEXT_UNDERLINE   0x02   /**< 下划线：基线下方画线（可能落在行框外） */
 #define MUI_TEXT_STRIKE      0x04   /**< 删除线：行顶与基线中点画线（在行框内） */
 
+/* -------- 文本对齐 -------- */
+
+/** @brief 文本（水平）对齐方式 */
+typedef enum {
+    MUI_ALIGN_LEFT = 0,    /**< 左对齐（默认） */
+    MUI_ALIGN_CENTER = 1,  /**< 水平居中 */
+    MUI_ALIGN_RIGHT = 2,   /**< 右对齐 */
+} mui_align_t;
+
+/**
+ * @brief 计算对齐后的文本起始 x
+ * @param x     参考矩形左边界
+ * @param w     参考矩形宽度
+ * @param tw    文本宽度（mui_text_width）
+ * @param align 对齐方式（mui_align_t）
+ * @return 文本起始 x；文本比参考框宽时退化为左对齐（不向左溢出）
+ */
+int16_t mui_text_align_x(int16_t x, int16_t w, int16_t tw, uint8_t align);
+
+/** @brief 计算垂直居中后的文本起始 y（框高小于文本高时退化为顶对齐） */
+int16_t mui_text_align_y(int16_t y, int16_t h, int16_t th);
+
 /**
  * @brief 绘制单个 LVGL 字体字符（8bpp alpha 混合，需纯色背景）
  * @param x      字符行框左上角 x
@@ -105,7 +127,26 @@ void mui_text_draw(int16_t x, int16_t y, const char *s, const mui_font_t *f,
  * @param flags  MUI_TEXT_* 位或，0 = 无装饰
  */
 void mui_text_draw_ex(int16_t x, int16_t y, const char *s, const mui_font_t *f,
-                           uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags);
+                          uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags);
+
+/**
+ * @brief 在矩形内绘制字符串：按 align 水平对齐 + 垂直居中
+ *
+ * 等价于先用 mui_text_align_x / mui_text_align_y 求起点，再调 mui_text_draw。
+ * 只负责"画"，不擦拭背景 —— 需要原地更新请先用背景色填矩形（或改用 mui_label）。
+ * @param x,y   参考矩形左上角
+ * @param w,h   参考矩形宽高
+ * @param align 水平对齐（MUI_ALIGN_LEFT / CENTER / RIGHT）
+ */
+void mui_text_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h,
+                        const char *s, const mui_font_t *f,
+                        uint16_t fg, uint16_t bg, int16_t scale, uint8_t align);
+
+/** @brief 同 mui_text_draw_rect，附带文字装饰（MUI_TEXT_* 位或） */
+void mui_text_draw_rect_ex(int16_t x, int16_t y, int16_t w, int16_t h,
+                           const char *s, const mui_font_t *f,
+                           uint16_t fg, uint16_t bg, int16_t scale,
+                           uint8_t align, uint8_t flags);
 
 /**
  * @brief 绘制单字符"整格覆盖"版（就地替换，无先擦后画 → 无闪烁）

@@ -201,6 +201,60 @@ void mui_text_draw(int16_t x, int16_t y, const char *s, const mui_font_t *f,
     mui_text_draw_ex(x, y, s, f, fg, bg, scale, 0);
 }
 
+/* -------- 文本对齐 -------- */
+
+int16_t mui_text_align_x(int16_t x, int16_t w, int16_t tw, uint8_t align)
+{
+    int16_t dx;
+
+    if (align == MUI_ALIGN_CENTER) {
+        dx = (int16_t)((w - tw) / 2);
+    } else if (align == MUI_ALIGN_RIGHT) {
+        dx = (int16_t)(w - tw);
+    } else {
+        dx = 0;
+    }
+    if (dx < 0) {
+        dx = 0;                 /* 文本比框宽：退化为左对齐，不向左溢出 */
+    }
+    return (int16_t)(x + dx);
+}
+
+int16_t mui_text_align_y(int16_t y, int16_t h, int16_t th)
+{
+    int16_t dy = (int16_t)((h - th) / 2);
+
+    if (dy < 0) {
+        dy = 0;
+    }
+    return (int16_t)(y + dy);
+}
+
+void mui_text_draw_rect_ex(int16_t x, int16_t y, int16_t w, int16_t h,
+                           const char *s, const mui_font_t *f,
+                           uint16_t fg, uint16_t bg, int16_t scale,
+                           uint8_t align, uint8_t flags)
+{
+    int16_t tw;
+    int16_t th;
+
+    if (f == NULL || s == NULL || scale < 1) {
+        return;
+    }
+    tw = mui_text_width(s, f, scale);
+    th = mui_text_height(f, scale, flags);
+    mui_text_draw_ex(mui_text_align_x(x, w, tw, align),
+                     mui_text_align_y(y, h, th),
+                     s, f, fg, bg, scale, flags);
+}
+
+void mui_text_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h,
+                        const char *s, const mui_font_t *f,
+                        uint16_t fg, uint16_t bg, int16_t scale, uint8_t align)
+{
+    mui_text_draw_rect_ex(x, y, w, h, s, f, fg, bg, scale, align, 0);
+}
+
 /** @brief 整格覆盖绘制的行缓冲上限（= 最大步进像素宽，防越界） */
 #define MUI_FONT_CELL_LINE_MAX   72
 
