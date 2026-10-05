@@ -101,11 +101,15 @@ static void pb_edge_pixel(int16_t x, int16_t y, int16_t du, int16_t dv,
                           int16_t ri, uint16_t fg, uint16_t screen_bg)
 {
     uint8_t a = mui_corner_alpha(du, dv, ri);
+    uint16_t base;
 
     if (a == 0) {
         return;
     }
-    mui_pixel_draw(x, y, (a == 255) ? fg : mui_color_mix(fg, screen_bg, a));
+    /* 这里刻意"不回读"：增量重绘时该像素可能还留着本控件上一帧的墨迹，
+     * 回读会把墨重复计一遍；但注册了图案取色回调时要按图案取真实底色。 */
+    base = mui_aa_base_at(x, y, screen_bg);
+    mui_pixel_draw(x, y, (a == 255) ? fg : mui_color_mix(fg, base, a));
 }
 
 /**

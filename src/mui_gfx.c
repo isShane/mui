@@ -878,11 +878,15 @@ void mui_image_draw_mask(int16_t x, int16_t y, int16_t w, int16_t h,
             uint8_t a = line[col];
 
             if (a < 8) {
-                continue;
+                continue;                   /* 极淡像素不落笔（保持既有口径） */
             }
             /* 已裁剪到屏幕内，直接写出（免去逐像素再判裁剪与脏区） */
-            mui_out_draw_pixel((int16_t)(x + col), (int16_t)(y + row),
-                               a >= 248 ? fg : mui_color_mix(fg, bg, a));
+            if (a >= 248) {
+                mui_out_draw_pixel((int16_t)(x + col), (int16_t)(y + row), fg);
+            } else {
+                mui_pixel_draw_aa((int16_t)(x + col), (int16_t)(y + row),
+                                  fg, bg, a);
+            }
         }
     }
 }
@@ -1078,19 +1082,17 @@ void mui_line_draw_aa(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
         uint8_t frac = (uint8_t)(y_fp & 0xFF);
         uint8_t a_hi = (uint8_t)(255 - frac);   /* 上侧像素前景强度 */
         if (a_hi != 0) {
-            uint16_t c_hi = mui_color_mix(fg, bg, a_hi);
             if (steep) {
-                mui_pixel_draw(y, x, c_hi);      /* 坐标换回屏幕系 */
+                mui_pixel_draw_aa(y, x, fg, bg, a_hi);      /* 坐标换回屏幕系 */
             } else {
-                mui_pixel_draw(x, y, c_hi);
+                mui_pixel_draw_aa(x, y, fg, bg, a_hi);
             }
         }
         if (frac != 0) {
-            uint16_t c_lo = mui_color_mix(fg, bg, frac);
             if (steep) {
-                mui_pixel_draw((int16_t)(y + 1), x, c_lo);
+                mui_pixel_draw_aa((int16_t)(y + 1), x, fg, bg, frac);
             } else {
-                mui_pixel_draw(x, (int16_t)(y + 1), c_lo);
+                mui_pixel_draw_aa(x, (int16_t)(y + 1), fg, bg, frac);
             }
         }
         y_fp += grad_fp;
@@ -1112,6 +1114,57 @@ void mui_line_draw_aa(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
  *        （45° 对角）不会补画"带外"的那个像素——那是 Wu 阶梯的正常特性，
  *        外观上是平滑斜线，不是断口。
  */
+/**
+ * @brief 内部：收集一段圆弧在某列上的全部对称点（alpha 为 0 的不入列）
+ * @note  镜像点会重合（x == y 的 45° 对角、x == 0 的轴线），交给 arc_emit 去重
+ */
+static void arc_collect(int16_t *px, int16_t *py, uint8_t *pa, int *n,
+                        uint8_t quad, int16_t cx, int16_t cy,
+                        int16_t dx, int16_t dy, uint8_t alpha)
+{
+    if (alpha == 0) {
+        return;
+    }
+    if (quad & 0x01) {                                  /* 左上 */
+        px[*n] = (int16_t)(cx - dx); py[*n] = (int16_t)(cy - dy); pa[*n] = alpha; (*n)++;
+        px[*n] = (int16_t)(cx - dy); py[*n] = (int16_t)(cy - dx); pa[*n] = alpha; (*n)++;
+    }
+    if (quad & 0x02) {                                  /* 右上 */
+        px[*n] = (int16_t)(cx + dx); py[*n] = (int16_t)(cy - dy); pa[*n] = alpha; (*n)++;
+        px[*n] = (int16_t)(cx + dy); py[*n] = (int16_t)(cy - dx); pa[*n] = alpha; (*n)++;
+    }
+    if (quad & 0x04) {                                  /* 右下 */
+        px[*n] = (int16_t)(cx + dx); py[*n] = (int16_t)(cy + dy); pa[*n] = alpha; (*n)++;
+        px[*n] = (int16_t)(cx + dy); py[*n] = (int16_t)(cy + dx); pa[*n] = alpha; (*n)++;
+    }
+    if (quad & 0x08) {                                  /* 左下 */
+        px[*n] = (int16_t)(cx - dx); py[*n] = (int16_t)(cy + dy); pa[*n] = alpha; (*n)++;
+        px[*n] = (int16_t)(cx - dy); py[*n] = (int16_t)(cy + dx); pa[*n] = alpha; (*n)++;
+    }
+}
+
+/**
+ * @brief 内部：落墨收集到的点，同坐标只画最后一次
+ * @note  完全等价于"按顺序直接覆盖画"（后者最终也是最后一次生效），
+ *        但在能回读底色的后端上避免同一像素被混两遍而加重。
+ */
+static void arc_emit(const int16_t *px, const int16_t *py, const uint8_t *pa, int n,
+                     uint16_t fg, uint16_t bg)
+{
+    int i, j;
+
+    for (i = 0; i < n; i++) {
+        for (j = i + 1; j < n; j++) {
+            if (px[i] == px[j] && py[i] == py[j]) {
+                break;                                  /* 后面还有同坐标的：让最后一次画 */
+            }
+        }
+        if (j == n) {
+            mui_pixel_draw_aa(px[i], py[i], fg, bg, pa[i]);
+        }
+    }
+}
+
 static void mui_circle_arc_aa(int16_t cx, int16_t cy, int16_t r, uint8_t quad,
                               uint16_t fg, uint16_t bg)
 {
@@ -1132,48 +1185,15 @@ static void mui_circle_arc_aa(int16_t cx, int16_t cy, int16_t r, uint8_t quad,
         int16_t y = (int16_t)(y_fp >> 8);
         uint8_t frac = (uint8_t)(y_fp & 0xFF);
         int16_t y1 = (int16_t)(y + 1);
+        int16_t px[16];
+        int16_t py[16];
+        uint8_t pa[16];
+        int n = 0;
 
-        /* 圆上每点画"内侧 + 外侧"双像素，按象限掩码取点 */
-        if (frac != 0xFF) {                     /* 内侧强度 = 255 - frac */
-            uint16_t c = mui_color_mix(fg, bg, (uint8_t)(255 - frac));
-
-            if (quad & 0x01) {                  /* 左上 */
-                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy - y), c);
-                mui_pixel_draw((int16_t)(cx - y), (int16_t)(cy - x), c);
-            }
-            if (quad & 0x02) {                  /* 右上 */
-                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy - y), c);
-                mui_pixel_draw((int16_t)(cx + y), (int16_t)(cy - x), c);
-            }
-            if (quad & 0x04) {                  /* 右下 */
-                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy + y), c);
-                mui_pixel_draw((int16_t)(cx + y), (int16_t)(cy + x), c);
-            }
-            if (quad & 0x08) {                  /* 左下 */
-                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy + y), c);
-                mui_pixel_draw((int16_t)(cx - y), (int16_t)(cy + x), c);
-            }
-        }
-        if (frac != 0) {                        /* 外侧强度 = frac */
-            uint16_t c = mui_color_mix(fg, bg, frac);
-
-            if (quad & 0x01) {
-                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy - y1), c);
-                mui_pixel_draw((int16_t)(cx - y1), (int16_t)(cy - x), c);
-            }
-            if (quad & 0x02) {
-                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy - y1), c);
-                mui_pixel_draw((int16_t)(cx + y1), (int16_t)(cy - x), c);
-            }
-            if (quad & 0x04) {
-                mui_pixel_draw((int16_t)(cx + x), (int16_t)(cy + y1), c);
-                mui_pixel_draw((int16_t)(cx + y1), (int16_t)(cy + x), c);
-            }
-            if (quad & 0x08) {
-                mui_pixel_draw((int16_t)(cx - x), (int16_t)(cy + y1), c);
-                mui_pixel_draw((int16_t)(cx - y1), (int16_t)(cy + x), c);
-            }
-        }
+        /* 圆上每点画"内侧（255-frac） + 外侧（frac）"双像素，按象限掩码取点 */
+        arc_collect(px, py, pa, &n, quad, cx, cy, x, y, (uint8_t)(255 - frac));
+        arc_collect(px, py, pa, &n, quad, cx, cy, x, y1, frac);
+        arc_emit(px, py, pa, n, fg, bg);
     }
 }
 
@@ -1200,7 +1220,7 @@ static void mui_disc_edge_pixel(int16_t x, int16_t y, int32_t n, int32_t r_f,
     if (cov8 > 256) {
         cov8 = 256;
     }
-    mui_pixel_draw(x, y, mui_color_mix(fg, bg, (uint8_t)((cov8 * 255) >> 8)));
+    mui_pixel_draw_aa(x, y, fg, bg, (uint8_t)((cov8 * 255) >> 8));
 }
 #endif /* MUI_CFG_AA */
 
@@ -1343,23 +1363,61 @@ int16_t mui_num16_fmt(char *buf, int16_t v, char suffix)
     return i;
 }
 
-/**
- * @brief 抗锯齿落笔：能回读屏幕就用真实底色，否则用调用方给的 bg
- */
-static void mui_pixel_draw_aa(int16_t x, int16_t y, uint16_t fg, uint16_t bg,
-                              uint8_t a)
-{
-    uint16_t base;
+/* -------- 抗锯齿底色（图案背景用） -------- */
 
+static mui_aa_base_fn s_aa_base = NULL;   /* 图案底色取样回调，未注册时为 NULL */
+
+void mui_aa_base_set(mui_aa_base_fn fn)
+{
+    s_aa_base = fn;
+}
+
+uint16_t mui_aa_base_at(int16_t x, int16_t y, uint16_t fallback)
+{
+    if (s_aa_base != NULL) {
+        return s_aa_base(x, y);
+    }
+    return fallback;
+}
+
+uint16_t mui_aa_base_get(int16_t x, int16_t y, uint16_t fallback)
+{
+    if (s_aa_base != NULL) {
+        return s_aa_base(x, y);
+    }
+    if (MUI_OUT_CAN_READ_PIXEL) {
+        return mui_out_read_pixel(x, y);
+    }
+    return fallback;
+}
+
+uint8_t mui_aa_base_mode(void)
+{
+    if (s_aa_base != NULL) {
+        return MUI_AA_BASE_PATTERN;
+    }
+    if (MUI_OUT_CAN_READ_PIXEL) {
+        return MUI_AA_BASE_SCREEN;
+    }
+    return MUI_AA_BASE_UNIFORM;
+}
+
+/**
+ * @brief 抗锯齿落笔：① 图案取样回调 → ② 回读屏幕 → ③ 调用方给的 bg
+ * @note  回调优先：它是调用方"我知道 (x,y) 底下是什么"的显式声明，用它绝不会
+ *        比现状更差，而且直绘/缓冲两种后端结果完全一致；
+ *        没注册回调时才回读屏幕（读到的通常就是真正压着的东西）。
+ */
+void mui_pixel_draw_aa(int16_t x, int16_t y, uint16_t fg, uint16_t bg, uint8_t a)
+{
     if (a == 0) {
         return;
     }
-    if (MUI_OUT_CAN_READ_PIXEL) {
-        base = mui_out_read_pixel(x, y);
-    } else {
-        base = bg;
+    if (a == 255) {
+        mui_pixel_draw(x, y, fg);
+        return;
     }
-    mui_pixel_draw(x, y, (a == 255) ? fg : mui_color_mix(fg, base, a));
+    mui_pixel_draw(x, y, mui_color_mix(fg, mui_aa_base_get(x, y, bg), a));
 }
 
 void mui_round_rect_fill_aa(int16_t x, int16_t y, int16_t w, int16_t h,
@@ -1703,7 +1761,7 @@ static void mui_arc_core(int16_t cx, int16_t cy, int16_t r, int16_t a0, int16_t 
             }
             cov8 = mui_sd_cov8(sd8);
             if (cov8 <= 0) { continue; }
-            mui_pixel_draw(x, dy, mui_color_mix(fg, bg, (uint8_t)((cov8 * 255) >> 8)));
+            mui_pixel_draw_aa(x, dy, fg, bg, (uint8_t)((cov8 * 255) >> 8));
         }
     }
 }
@@ -1805,8 +1863,7 @@ void mui_ring_fill_aa(int16_t cx, int16_t cy, int16_t rin, int16_t rout,
                     sd8 = ins ? -dmin : dmin;       /* 仅角边过渡带，无需开方 */
                     cov8 = mui_sd_cov8(sd8);
                     if (cov8 > 0) {
-                        mui_pixel_draw(x, dy,
-                            mui_color_mix(fg, bg, (uint8_t)((cov8 * 255) >> 8)));
+                        mui_pixel_draw_aa(x, dy, fg, bg, (uint8_t)((cov8 * 255) >> 8));
                     }
                     continue;
                 }
@@ -1827,8 +1884,7 @@ void mui_ring_fill_aa(int16_t cx, int16_t cy, int16_t rin, int16_t rout,
                 }
                 cov8 = mui_sd_cov8(sd8);
                 if (cov8 > 0) {
-                    mui_pixel_draw(x, dy,
-                        mui_color_mix(fg, bg, (uint8_t)((cov8 * 255) >> 8)));
+                    mui_pixel_draw_aa(x, dy, fg, bg, (uint8_t)((cov8 * 255) >> 8));
                 }
             }
         }

@@ -64,6 +64,45 @@ uint8_t mui_corner_alpha(int16_t ux, int16_t uy, int16_t r);
  */
 int16_t mui_num16_fmt(char *buf, int16_t v, char suffix);
 
+/**
+ * @brief 抗锯齿落笔（库内公共）：按覆盖率 a 把 fg 混到"底色"上
+ * @param x,y 像素坐标（调用方已裁剪到屏幕内）
+ * @param fg  前景色
+ * @param bg  底色兜底值（直绘后端 / 无图案回调 / 不能回读时使用）
+ * @param a   覆盖率 0~255（0 = 不落笔，255 = 纯 fg）
+ * @note  底色取值优先级：① mui_aa_base_set() 注册的图案取样回调；② 缓冲/
+ *        条带后端回读当前屏上像素；③ 参数 bg。
+ *        ② 仅在"读到的像素确实还是底色"时成立：整帧重绘成立；对同一形状
+ *        反复增量重绘会累积加墨 ⇒ 那种场景请注册 ① 或传准 bg。
+ */
+void mui_pixel_draw_aa(int16_t x, int16_t y, uint16_t fg, uint16_t bg, uint8_t a);
+
+/**
+ * @brief 取抗锯齿底色（不回读版）：① 图案取样回调 → ② fallback
+ * @note  供控件边界像素使用：控件增量重绘时不能回读（会把上一帧自己的墨迹
+ *        当成底色、越描越实），但注册了图案回调时仍能取到真实底色。
+ */
+uint16_t mui_aa_base_at(int16_t x, int16_t y, uint16_t fallback);
+
+/**
+ * @brief 取抗锯齿底色（完整版）：① 图案回调 → ② 回读屏幕 → ③ fallback
+ * @note  供"逐像素决定底色"的绘制路径（文字、图元边界）使用。
+ */
+uint16_t mui_aa_base_get(int16_t x, int16_t y, uint16_t fallback);
+
+/** @brief mui_aa_base_mode() 的返回值 */
+#define MUI_AA_BASE_UNIFORM  0   /**< 底色恒为传入的 bg（直绘后端且未注册图案回调） */
+#define MUI_AA_BASE_PATTERN  1   /**< 注册了图案取样回调：底色必须逐像素解析 */
+#define MUI_AA_BASE_SCREEN   2   /**< 无回调但能回读：底色由屏上内容决定 */
+
+/**
+ * @brief 查询当前底色模式（见上面三个宏）
+ * @return MUI_AA_BASE_UNIFORM / MUI_AA_BASE_PATTERN / MUI_AA_BASE_SCREEN
+ * @note  模式为 UNIFORM 时，调用方可以完全按"底色 = bg"绘制，零额外开销；
+ *        其余模式需要逐像素调 mui_aa_base_get() 取真实底色。
+ */
+uint8_t mui_aa_base_mode(void);
+
 #ifdef __cplusplus
 }
 #endif

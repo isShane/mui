@@ -6,6 +6,7 @@
 #include "mui_label.h"
 #include "mui.h"
 #include "mui_font.h"
+#include "mui_math.h"   /* 库内公共：抗锯齿底色（图案背景） */
 
 /**
  * @brief 覆盖式刷新开关：1 = 等长同宽文本走"整格覆盖"（无擦白阶段，防闪烁）
@@ -101,20 +102,45 @@ static int16_t label_prefix_width(const mui_label_t *lbl, const char *s, int16_t
 }
 
 /**
- * @brief 内部：擦除上次绘制区域（bg 填充，四周留 2px 防残影）
+ * @brief 内部：把一块区域恢复成底色
+ * @note  注册了图案取样回调时逐像素重画图案（只有回调能真正"还原图案"：
+ *        回读在擦除时读到的正是即将被擦掉的旧墨）；否则仍走一次
+ *        rect_fill(bg) 快路径，行为与旧版逐字节一致。
+ */
+static void label_erase_rect(const mui_label_t *lbl, int16_t x, int16_t y,
+                             int16_t w, int16_t h)
+{
+    if (mui_aa_base_mode() == MUI_AA_BASE_PATTERN) {
+        int16_t cx, cy;
+
+        if (w < 1 || h < 1) {
+            return;
+        }
+        for (cy = 0; cy < h; cy++) {
+            for (cx = 0; cx < w; cx++) {
+                int16_t px = (int16_t)(x + cx);
+                int16_t py = (int16_t)(y + cy);
+                mui_pixel_draw(px, py, mui_aa_base_get(px, py, lbl->bg));
+            }
+        }
+        return;
+    }
+    mui_rect_fill(x, y, w, h, lbl->bg);
+}
+
+/**
+ * @brief 内部：擦除上次绘制区域（底色填充，四周留 2px 防残影）
  */
 static void label_erase(const mui_label_t *lbl)
 {
     if (label_aligned(lbl)) {
         /* 对齐模式：内容可能落在参考框内任意位置 → 整框擦除 */
-        mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
-                      (int16_t)(lbl->w + 4), (int16_t)(lbl->last_h + 4),
-                      lbl->bg);
+        label_erase_rect(lbl, (int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
+                         (int16_t)(lbl->w + 4), (int16_t)(lbl->last_h + 4));
         return;
     }
-    mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
-                  (int16_t)(lbl->last_w + 4), (int16_t)(lbl->last_h + 4),
-                  lbl->bg);
+    label_erase_rect(lbl, (int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
+                     (int16_t)(lbl->last_w + 4), (int16_t)(lbl->last_h + 4));
 }
 
 void mui_label_init(mui_label_t *lbl, int16_t x, int16_t y,
@@ -243,15 +269,13 @@ void mui_label_set_text(mui_label_t *lbl, const char *text)
 
     if (left == 0) {
         /* 从行首开始：保留原有 2 像素外扩，防字形左溢残影 */
-        mui_rect_fill((int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
-                      (int16_t)(erase_w + 4),
-                      (int16_t)((lbl->last_h > new_h ? lbl->last_h : new_h) + 4),
-                      lbl->bg);
+        label_erase_rect(lbl, (int16_t)(lbl->x - 2), (int16_t)(lbl->y - 2),
+                         (int16_t)(erase_w + 4),
+                         (int16_t)((lbl->last_h > new_h ? lbl->last_h : new_h) + 4));
     } else {
-        mui_rect_fill((int16_t)(lbl->x + left_x), (int16_t)(lbl->y - 2),
-                      erase_w,
-                      (int16_t)((lbl->last_h > new_h ? lbl->last_h : new_h) + 4),
-                      lbl->bg);
+        label_erase_rect(lbl, (int16_t)(lbl->x + left_x), (int16_t)(lbl->y - 2),
+                         erase_w,
+                         (int16_t)((lbl->last_h > new_h ? lbl->last_h : new_h) + 4));
     }
     label_paint_at(lbl, (int16_t)(lbl->x + left_x), lbl->buf + left);
 

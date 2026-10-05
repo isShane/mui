@@ -11,6 +11,7 @@
 
 #include "mui.h"
 #include "mui_font.h"
+#include "mui_math.h"   /* 库内公共：抗锯齿底色（图案背景） */
 
 /* -------- LVGL 转换字体渲染（8bpp alpha 混合） -------- */
 
@@ -123,6 +124,10 @@ static void text_draw_glyph_flags(int16_t x, int16_t y, const mui_glyph_dsc_t *g
 {
     int16_t gx, gy;
     int row, col;
+    /* 底色只在注册了图案取样回调时逐像素解析 —— 文字**不回读**：回读会把
+     * 旧墨/其它图形当底色，结果依赖绘制历史；为 0 时直接用 bg，
+     * 与旧版逐字节一致、零额外开销。 */
+    uint8_t dyn = (uint8_t)(mui_aa_base_mode() == MUI_AA_BASE_PATTERN);
 
     /* 行框顶部到字形顶部的偏移（base_line 从行底向上为正） */
     gx = (int16_t)(x + g->ofs_x * scale);
@@ -135,6 +140,7 @@ static void text_draw_glyph_flags(int16_t x, int16_t y, const mui_glyph_dsc_t *g
         for (col = 0; col < g->box_w; col++) {
             uint8_t raw = bm[col];
             uint8_t alpha = raw;
+            int16_t px, py;
             uint16_t color;
 
             if (flags & MUI_TEXT_BOLD) {
@@ -150,10 +156,14 @@ static void text_draw_glyph_flags(int16_t x, int16_t y, const mui_glyph_dsc_t *g
             if (alpha == 0) {
                 continue;
             }
-            color = (alpha >= 250) ? fg : mui_color_mix(fg, bg, alpha);
-            mui_rect_fill((int16_t)(gx + col * scale),
-                          (int16_t)(gy + row * scale),
-                          scale, scale, color);
+            px = (int16_t)(gx + col * scale);
+            py = (int16_t)(gy + row * scale);
+            if (alpha >= 250) {
+                color = fg;                      /* 实心笔画：直取前景（与旧口径一致） */
+            } else {
+                color = mui_color_mix(fg, dyn ? mui_aa_base_at(px, py, bg) : bg, alpha);
+            }
+            mui_rect_fill(px, py, scale, scale, color);
         }
     }
 }
@@ -298,6 +308,10 @@ static void text_draw_glyph_cell_flags(int16_t x, int16_t y,
     uint16_t line[MUI_FONT_CELL_LINE_MAX];
     int16_t step, gy_rel, rows, th, uy, sy;
     int row, col, i, px;
+    /* 整格覆盖是"就地替换"：底色只能来自图案取样回调（能真正还原图案），
+     * **不能回读** —— 回读读到的可能是本格上一帧的旧字墨迹，那样旧字形就擦不掉。
+     * =0 时整格直接铺 bg，与旧版逐字节一致、零额外开销。 */
+    uint8_t dyn = (uint8_t)(mui_aa_base_mode() == MUI_AA_BASE_PATTERN);
 
     step = text_char_step(g, scale);                   /* 格宽 = 步进宽 */
     if (step < 1 || step > MUI_FONT_CELL_LINE_MAX) {
@@ -311,9 +325,16 @@ static void text_draw_glyph_cell_flags(int16_t x, int16_t y,
     sy     = ctx->sy;
 
     for (row = 0; row < rows; row++) {
-        /* 本行先铺背景色（旧内容被就地覆盖） */
-        for (i = 0; i < step; i++) {
-            line[i] = bg;
+        /* 本行先铺底色（旧内容被就地覆盖）。注册了图案回调时逐像素取图案色，
+         * 这样"整格覆盖"只刷新文字、不会把背景图案涂掉。 */
+        if (dyn) {
+            for (i = 0; i < step; i++) {
+                line[i] = mui_aa_base_at((int16_t)(x + i), (int16_t)(y + row), bg);
+            }
+        } else {
+            for (i = 0; i < step; i++) {
+                line[i] = bg;
+            }
         }
         /* 行落在字形纵向范围内则叠加字形像素 */
         if (row >= gy_rel && row < gy_rel + g->box_h * scale) {
@@ -337,8 +358,18 @@ static void text_draw_glyph_cell_flags(int16_t x, int16_t y,
                     }
                 }
                 prev = raw;
-                color = (alpha == 0) ? bg
-                                     : ((alpha >= 250) ? fg : mui_color_mix(fg, bg, alpha));
+                if (alpha == 0) {
+                    continue;                      /* 保留已铺好的底色 */
+                }
+                if (alpha >= 250) {
+                    color = fg;
+                } else {
+                    int16_t bx = (int16_t)(x + g->ofs_x * scale + col * scale);
+                    color = mui_color_mix(fg,
+                                          dyn ? mui_aa_base_at(bx, (int16_t)(y + row), bg)
+                                              : bg,
+                                          alpha);
+                }
                 for (i = 0; i < scale; i++) {
                     px = g->ofs_x * scale + col * scale + i;
                     if (px >= 0 && px < step) {

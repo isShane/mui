@@ -160,7 +160,8 @@ static void slider_rim(uint8_t dir, int16_t cx, int16_t cy, int16_t kr, int16_t 
                 in_band = (uint8_t)(xx >= -half && xx <= half);
                 bg = (dy <= cy) ? track : fill;
             }
-            bg = in_band ? bg : screen_bg;
+            /* 圆头伸出轨道的那部分压在页面底色上：注册了图案回调就按图案取色 */
+            bg = in_band ? bg : mui_aa_base_at(x, dy, screen_bg);
             if (!aa) {
                 if (r2 <= (int32_t)kr * kr) {
                     mui_pixel_draw(x, dy, color);
@@ -170,11 +171,15 @@ static void slider_rim(uint8_t dir, int16_t cx, int16_t cy, int16_t kr, int16_t 
             {
                 int32_t d_f = (int32_t)mui_sqrt_fp8((uint32_t)r2);
                 int32_t cov8 = 128 - (d_f - ((int32_t)kr << 8));
+                uint8_t a;
                 if (cov8 <= 0) { continue; }
                 if (cov8 > 256) { cov8 = 256; }
+                a = (uint8_t)((cov8 * 255) >> 8);
+                /* 底色：注册了图案回调就按图案取色，否则沿用上面按几何判出的底色
+                 * （不改回读：圆头可能压在上一帧自己的墨迹上） */
                 mui_pixel_draw(x, dy,
-                               mui_color_mix(color, bg,
-                                             (uint8_t)((cov8 * 255) >> 8)));
+                               mui_color_mix(color,
+                                             mui_aa_base_at(x, dy, bg), a));
             }
         }
     }
