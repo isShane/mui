@@ -1011,16 +1011,29 @@ void mui_image_draw_nine_key(int16_t x, int16_t y, int16_t w, int16_t h,
 
 /* -------- 颜色混合与抗锯齿 -------- */
 
+/** @brief 无除法版 round(sum / 255)：t = sum + 128
+ *  @note  已穷举验证 t-128 ∈ [0, 65535] 时与 (sum + 127) / 255 逐值一致；
+ *         M0 无硬件除法器，一次 `/255` 约 50 周期，这里换成两次移位一次加法。 */
+static uint32_t mix_div255(uint32_t t)
+{
+    return (t + (t >> 8)) >> 8;
+}
+
 uint16_t mui_color_mix(uint16_t fg, uint16_t bg, uint8_t alpha)
 {
-    uint32_t w_fg = alpha;
-    uint32_t w_bg = 255u - alpha;
-    uint32_t r = ((((fg >> 11) & 0x1F) * w_fg + ((bg >> 11) & 0x1F) * w_bg)
-                  + 127) / 255;
-    uint32_t g = ((((fg >> 5) & 0x3F) * w_fg + ((bg >> 5) & 0x3F) * w_bg)
-                  + 127) / 255;
-    uint32_t b = ((((fg & 0x1F) * w_fg) + (bg & 0x1F) * w_bg)
-                  + 127) / 255;
+    uint32_t w_fg, w_bg, r, g, b;
+
+    if (alpha == 0) {
+        return bg;                      /* 全透明：整数式的结果本来就等于 bg */
+    }
+    if (alpha == 255) {
+        return fg;                      /* 全覆盖：同上，省 3 次混色运算 */
+    }
+    w_fg = alpha;
+    w_bg = 255u - alpha;
+    r = mix_div255((((fg >> 11) & 0x1F) * w_fg + ((bg >> 11) & 0x1F) * w_bg) + 128u);
+    g = mix_div255((((fg >> 5) & 0x3F) * w_fg + ((bg >> 5) & 0x3F) * w_bg) + 128u);
+    b = mix_div255((((fg & 0x1F) * w_fg) + (bg & 0x1F) * w_bg) + 128u);
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
@@ -1174,6 +1187,23 @@ void mui_circle_draw_aa(int16_t cx, int16_t cy, int16_t r,
     mui_circle_arc_aa(cx, cy, r, 0x0F, fg, bg);   /* 整圆 = 四个象限拼起来 */
 }
 
+#if MUI_CFG_AA
+/** @brief 圆盘边缘像素：按覆盖率与 bg 混色落笔（n = 到圆心的距离平方） */
+static void mui_disc_edge_pixel(int16_t x, int16_t y, int32_t n, int32_t r_f,
+                                uint16_t fg, uint16_t bg)
+{
+    int32_t cov8 = 128 - ((int32_t)mui_sqrt_fp8((uint32_t)n) - r_f);
+
+    if (cov8 <= 0) {
+        return;
+    }
+    if (cov8 > 256) {
+        cov8 = 256;
+    }
+    mui_pixel_draw(x, y, mui_color_mix(fg, bg, (uint8_t)((cov8 * 255) >> 8)));
+}
+#endif /* MUI_CFG_AA */
+
 void mui_circle_fill_aa(int16_t cx, int16_t cy, int16_t r,
                         uint16_t fg, uint16_t bg)
 {
@@ -1182,27 +1212,43 @@ void mui_circle_fill_aa(int16_t cx, int16_t cy, int16_t r,
     mui_circle_fill(cx, cy, r, fg);
 #else
     int16_t dy, y0, y1;
-    int32_t r_f;
+    int32_t r_f, n_full;
 
     if (r < 0) { return; }
     r_f = (int32_t)r << 8;
+    /* 满覆盖（cov8 >= 256）的充要条件：d <= r - 0.5px ⟺ 4*n <= (2r-1)^2。
+     * 每行用一次开方解出满覆盖半宽，中间一次 hline 批量落笔，只有两侧
+     * 过渡带逐像素混色 —— 满覆盖像素的结果本来就恒等于 fg（alpha=255）。 */
+    n_full = ((int32_t)(2 * r - 1) * (2 * r - 1)) >> 2;
     y0 = (int16_t)(cy - r - 1);
     y1 = (int16_t)(cy + r + 1);
     for (dy = y0; dy <= y1; dy++) {
         int16_t yy = (int16_t)(dy - cy);
         int32_t dy2 = (int32_t)yy * yy;
         int32_t dxo2 = (int32_t)(r + 1) * (r + 1) - dy2;
-        int16_t dxo, x;
+        int16_t dxo, x, xfull = -1;
+        int16_t xl_end, xr_beg;
+
         if (dxo2 < 0) { continue; }
         dxo = (int16_t)mui_isqrt((uint32_t)dxo2);
-        for (x = (int16_t)(cx - dxo); x <= (int16_t)(cx + dxo); x++) {
+        if (r >= 1 && dy2 <= n_full) {
+            xfull = (int16_t)mui_isqrt((uint32_t)(n_full - dy2));
+        }
+        xl_end = (int16_t)(cx + dxo);              /* 默认整行走逐像素 */
+        xr_beg = (int16_t)(cx + dxo + 1);          /* 右段为空 */
+        if (xfull >= 0) {
+            xl_end = (int16_t)(cx - xfull - 1);
+            xr_beg = (int16_t)(cx + xfull + 1);
+            mui_hline_draw((int16_t)(cx - xfull), dy,
+                           (int16_t)(2 * xfull + 1), fg);
+        }
+        for (x = (int16_t)(cx - dxo); x <= xl_end; x++) {
             int16_t xx = (int16_t)(x - cx);
-            int32_t d_f = (int32_t)mui_sqrt_fp8((uint32_t)(xx * xx + dy2));
-            int32_t cov8 = 128 - (d_f - r_f);       /* 覆盖率：clamp(0.5 - (d-r)) */
-            if (cov8 <= 0) { continue; }
-            if (cov8 > 256) { cov8 = 256; }
-            mui_pixel_draw(x, dy,
-                           mui_color_mix(fg, bg, (uint8_t)((cov8 * 255) >> 8)));
+            mui_disc_edge_pixel(x, dy, (int32_t)xx * xx + dy2, r_f, fg, bg);
+        }
+        for (x = xr_beg; x <= (int16_t)(cx + dxo); x++) {
+            int16_t xx = (int16_t)(x - cx);
+            mui_disc_edge_pixel(x, dy, (int32_t)xx * xx + dy2, r_f, fg, bg);
         }
     }
 #endif
@@ -1261,6 +1307,40 @@ uint8_t mui_corner_alpha(int16_t ux, int16_t uy, int16_t r)
         return 255;
     }
     return (uint8_t)((cov * 255) >> 9);
+}
+
+/**
+ * @brief 把 int16 写进缓冲（可选单字符后缀），返回写入长度（不含结尾 NUL）
+ * @param buf    输出缓冲，容量必须 >= 8（"-32768" + 后缀 + NUL）
+ * @param v      要格式化的值
+ * @param suffix 追加字符（如 '%'）；传 '\0' 表示不追加
+ * @note  除 10 是常数除法（编译器转乘法移位），不引入 stdio / 浮点
+ */
+int16_t mui_num16_fmt(char *buf, int16_t v, char suffix)
+{
+    char tmp[8];
+    int16_t n = 0;
+    int16_t i = 0;
+    uint32_t u;
+
+    if (v < 0) {
+        buf[i++] = '-';
+        u = (uint32_t)(-(int32_t)v);
+    } else {
+        u = (uint32_t)v;
+    }
+    do {
+        tmp[n++] = (char)('0' + (char)(u % 10u));
+        u /= 10u;
+    } while (u != 0 && n < 7);
+    while (n > 0) {
+        buf[i++] = tmp[--n];
+    }
+    if (suffix != '\0') {
+        buf[i++] = suffix;
+    }
+    buf[i] = '\0';
+    return i;
 }
 
 /**
@@ -1468,16 +1548,34 @@ void mui_ring_fill(int16_t cx, int16_t cy, int16_t rin, int16_t rout,
         int16_t dxo, x;
         if (dxo2 < 0) { continue; }
         dxo = (int16_t)mui_isqrt((uint32_t)dxo2);
+
+        if (full) {
+            /* 整圆/整环：该行是"外圆弦 − 内孔弦"的两段，直接用 hline 批量写。
+             * 内孔半宽取 ceil(sqrt(rin²−dy²))，与逐像素的 r2 >= rin2 判据逐位等价。 */
+            if (dy2 < rin2) {
+                uint32_t rr = (uint32_t)(rin2 - dy2);
+                int16_t dxi = (int16_t)mui_isqrt(rr);
+                if ((uint32_t)dxi * (uint32_t)dxi < rr) {
+                    dxi = (int16_t)(dxi + 1);
+                }
+                if (dxi > dxo) {
+                    continue;                      /* 该行整段落在孔洞里 */
+                }
+                mui_hline_draw((int16_t)(cx - dxo), dy,
+                               (int16_t)(dxo - dxi + 1), color);
+                mui_hline_draw((int16_t)(cx + dxi), dy,
+                               (int16_t)(dxo - dxi + 1), color);
+                continue;
+            }
+            mui_hline_draw((int16_t)(cx - dxo), dy, (int16_t)(2 * dxo + 1), color);
+            continue;
+        }
         for (x = (int16_t)(cx - dxo); x <= (int16_t)(cx + dxo); x++) {
             int16_t xx = (int16_t)(x - cx);
             int32_t r2 = (int32_t)xx * xx + dy2;
             int32_t c0, c1;
             if (r2 > rout2) { continue; }
             if (r2 < rin2)  { continue; }
-            if (full) {
-                mui_pixel_draw(x, dy, color);
-                continue;
-            }
             c0 = (int32_t)ca0 * yy - (int32_t)sa0 * xx;
             c1 = (int32_t)xx * sa1 - (int32_t)yy * ca1;
             /* 角度判定：跨度<=180° 取两半平面之交，>180° 取并集（否则会取到补楔形） */
@@ -1518,6 +1616,8 @@ static void mui_arc_core(int16_t cx, int16_t cy, int16_t r, int16_t a0, int16_t 
     int32_t r_f, half_f, rout, span;
     int16_t e0x, e0y, e1x, e1y;
     uint32_t ro2p1;
+    uint32_t ring_lo2, ring_hi2;    /* 径向过渡带的平方界（带外必不落墨） */
+    int32_t cap_thr;                /* 端帽的切比雪夫剔除阈值（8.8） */
 
     if (r <= 0 || thickness <= 0) { return; }
     rout = (int32_t)r + (int32_t)((thickness + 1) / 2);
@@ -1535,6 +1635,21 @@ static void mui_arc_core(int16_t cx, int16_t cy, int16_t r, int16_t a0, int16_t 
     e1y = (int16_t)(((int32_t)r * sa1) >> 8);
 
     ro2p1 = (uint32_t)(rout + 1) * (uint32_t)(rout + 1);
+
+    /* 开方很贵（M0 无除法器），先用整数界把"覆盖率必为 0"的像素剔掉，只让过渡带开方：
+     * ① 径向（full 弧，或落在楔形内的像素）：r2 与 (中心线 ±(半厚+0.5px))² 比较；
+     * ② 端帽（楔形外）：切比雪夫距离是欧氏距离的下界，够不着半个像素就直接跳过。
+     * 两者都只剔除"必定不落墨"的像素，落墨结果与逐像素开方版逐位一致。 */
+    {
+        int32_t a_lo = r_f - half_f - 128;              /* 径向带内界（8.8，可负） */
+        int32_t b_hi = r_f + half_f + 128;              /* 径向带外界（8.8） */
+        int32_t ap = (a_lo > 0) ? (a_lo >> 8) : 0;      /* 下界取 floor（保守剔除） */
+        int32_t bp = (b_hi >> 8) + 1;                   /* 上界取 ceil（保守剔除） */
+        ring_lo2 = (uint32_t)(ap * ap);
+        ring_hi2 = (uint32_t)(bp * bp);
+        cap_thr  = aa ? (half_f + 128) : (half_f + 1);  /* m<<8 >= 它即无墨 */
+    }
+
     y0 = (int16_t)(cy - rout - 1);
     y1 = (int16_t)(cy + rout + 1);
     for (dy = y0; dy <= y1; dy++) {
@@ -1547,27 +1662,39 @@ static void mui_arc_core(int16_t cx, int16_t cy, int16_t r, int16_t a0, int16_t 
         for (x = (int16_t)(cx - dxo); x <= (int16_t)(cx + dxo); x++) {
             int16_t xx = (int16_t)(x - cx);
             int32_t r2 = (int32_t)xx * xx + dy2;
-            int32_t d_f, dist8, sd8, cov8;
+            int32_t dist8 = -1;                 /* <0 表示尚未定出到形状的距离 */
+            int32_t sd8, cov8;
+
             if ((uint32_t)r2 > ro2p1) { continue; }
-            d_f = (int32_t)mui_sqrt_fp8((uint32_t)r2);
-            if (full) {
-                dist8 = d_f - r_f;
-                if (dist8 < 0) { dist8 = -dist8; }
-            } else {
+            if (!full) {
                 int32_t h0 = (int32_t)ca0 * yy - (int32_t)sa0 * xx;
                 int32_t h1 = (int32_t)xx * sa1 - (int32_t)yy * ca1;
                 int32_t ins = (span <= 180) ? (h0 >= 0 && h1 >= 0)
                                             : (h0 >= 0 || h1 >= 0);
-                if (ins) {
-                    dist8 = d_f - r_f;                 /* 径向对齐中心线 */
-                    if (dist8 < 0) { dist8 = -dist8; }
-                } else {
-                    int32_t ax = xx - e0x, ay = yy - e0y;   /* 到端帽圆心的距离 */
+                if (!ins) {
+                    int32_t ax = xx - e0x, ay = yy - e0y;   /* 到端帽圆心的向量 */
                     int32_t bx = xx - e1x, by = yy - e1y;
-                    int32_t q0 = (int32_t)mui_sqrt_fp8((uint32_t)(ax * ax + ay * ay));
-                    int32_t q1 = (int32_t)mui_sqrt_fp8((uint32_t)(bx * bx + by * by));
-                    dist8 = (q0 < q1) ? q0 : q1;
+                    int32_t axa = (ax < 0) ? -ax : ax;
+                    int32_t aya = (ay < 0) ? -ay : ay;
+                    int32_t bxa = (bx < 0) ? -bx : bx;
+                    int32_t bya = (by < 0) ? -by : by;
+                    int32_t m0 = (axa > aya) ? axa : aya;   /* 切比雪夫 <= 欧氏 */
+                    int32_t m1 = (bxa > bya) ? bxa : bya;
+                    int32_t m  = (m0 < m1) ? m0 : m1;       /* 两端帽都够不着 */
+                    if ((m << 8) >= cap_thr) { continue; }
+                    {
+                        int32_t q0 = (int32_t)mui_sqrt_fp8((uint32_t)(ax * ax + ay * ay));
+                        int32_t q1 = (int32_t)mui_sqrt_fp8((uint32_t)(bx * bx + by * by));
+                        dist8 = (q0 < q1) ? q0 : q1;
+                    }
                 }
+            }
+            if (dist8 < 0) {                           /* 径向对齐中心线 */
+                int32_t d_f;
+                if ((uint32_t)r2 < ring_lo2 || (uint32_t)r2 > ring_hi2) { continue; }
+                d_f = (int32_t)mui_sqrt_fp8((uint32_t)r2);
+                dist8 = d_f - r_f;
+                if (dist8 < 0) { dist8 = -dist8; }
             }
             sd8 = dist8 - half_f;
             if (!aa) {

@@ -4,8 +4,7 @@
  */
 
 #include "mui_slider.h"
-#include "mui_math.h"   /* 库内数学：整数开方 / 8.8 定点开方 */
-#include <stdio.h>
+#include "mui_math.h"   /* 库内公共：整数开方 / 8.8 定点开方 / 数值格式化 */
 
 const mui_slider_style_t mui_slider_style_default = {
     .track       = MUI_RGB565(0x33, 0x3D, 0x4E),
@@ -352,7 +351,7 @@ void mui_slider_draw(const mui_slider_t *s)
         char buf[8];
         int16_t tw;
 
-        snprintf(buf, sizeof(buf), "%d", s->value);
+        mui_num16_fmt(buf, s->value, '\0');       /* 不用 stdio：省 1.5~6KB Flash */
         tw = mui_text_width(buf, s->font, 1);
         if (st->dir == MUI_SLIDER_HORIZONTAL) {
             mui_text_draw((int16_t)(cx - tw / 2),

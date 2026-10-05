@@ -4,6 +4,7 @@
  */
 
 #include "mui_gauge.h"
+#include "mui_math.h"   /* 库内公共：整数格式化 / 开方 */
 
 const mui_gauge_style_t mui_gauge_style_default = {
     MUI_RGB565(0x33, 0x3D, 0x4E),   /* track：深灰蓝轨道 */
@@ -26,38 +27,6 @@ static int16_t gauge_thick(const mui_gauge_t *g, const mui_gauge_style_t *s)
         t = 1;
     }
     return t;
-}
-
-/** @brief 内部：把整数（可选百分号后缀）写入缓冲，返回长度；不用 stdio */
-static int16_t gauge_fmt(char *buf, int16_t v, uint8_t percent)
-{
-    char tmp[8];
-    int16_t n = 0;
-    int16_t i = 0;
-    uint8_t neg = 0;
-    uint32_t u;
-
-    if (v < 0) {
-        neg = 1;
-        u = (uint32_t)(-(int32_t)v);
-    } else {
-        u = (uint32_t)v;
-    }
-    do {
-        tmp[n++] = (char)('0' + (char)(u % 10u));
-        u /= 10u;
-    } while (u != 0 && n < 7);
-    if (neg) {
-        buf[i++] = '-';
-    }
-    while (n > 0) {
-        buf[i++] = tmp[--n];
-    }
-    if (percent) {
-        buf[i++] = '%';
-    }
-    buf[i] = '\0';
-    return i;
 }
 
 int16_t mui_gauge_value_angle(const mui_gauge_t *g, int16_t value)
@@ -262,9 +231,9 @@ void mui_gauge_draw(mui_gauge_t *g)
             if (g->max > g->min) {
                 p = ((int32_t)(g->value - g->min) * 100) / (g->max - g->min);
             }
-            gauge_fmt(buf, (int16_t)p, 1);
+            mui_num16_fmt(buf, (int16_t)p, '%');
         } else {
-            gauge_fmt(buf, g->value, 0);
+            mui_num16_fmt(buf, g->value, '\0');
         }
 
         /* 用与 mui_text_draw_rect 同一套对齐函数算出占位，保证擦除框==绘制框 */

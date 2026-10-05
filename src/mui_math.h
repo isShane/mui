@@ -54,6 +54,16 @@ void mui_corner_span(int16_t dy, int16_t r, int16_t *dxf, int16_t *dxp);
  */
 uint8_t mui_corner_alpha(int16_t ux, int16_t uy, int16_t r);
 
+/**
+ * @brief 整数转字符串（可选单字符后缀，如 '%'），不用 stdio
+ * @param buf    输出缓冲，容量必须 >= 8（"-32768" + 后缀 + NUL）
+ * @param v      要格式化的值
+ * @param suffix 追加字符；'\0' = 不追加
+ * @return 写入长度（不含结尾 NUL）
+ * @note  控件里显示数值（滑块 / 表盘）共用这一份，避免把 printf 链进固件
+ */
+int16_t mui_num16_fmt(char *buf, int16_t v, char suffix);
+
 #ifdef __cplusplus
 }
 #endif

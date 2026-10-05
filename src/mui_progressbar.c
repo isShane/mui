@@ -223,15 +223,15 @@ static void pb_paint_fill_h(int16_t ix, int16_t iy, int16_t iw, int16_t ih,
         if (tf < tp) { tf = tp; }
         if (bf > bp) { bf = bp; }
 
-        if (erase) {
-            pb_paint_vspan(ix, iy, col, tp, tf, bf, bp, cyl, cyb, dy, ri,
-                           bg, screen_bg);          /* 恢复成槽（带混色的轮廓） */
-        }
         if (col >= f_new) {
+            if (erase) {                               /* 该列没被填充盖住才需要擦 */
+                pb_paint_vspan(ix, iy, col, tp, tf, bf, bp, cyl, cyb, dy, ri,
+                               bg, screen_bg);         /* 恢复成槽（带混色的轮廓） */
+            }
             continue;
         }
         pb_paint_vspan(ix, iy, col, tp, tf, bf, bp, cyl, cyb, dy, ri,
-                       fg, screen_bg);
+                       fg, screen_bg);                 /* 同一跨度直接覆盖，无需先擦 */
     }
 }
 
@@ -285,15 +285,15 @@ static void pb_paint_fill_v(int16_t ix, int16_t iy, int16_t iw, int16_t ih,
         if (lf < lp) { lf = lp; }
         if (rf > rp) { rf = rp; }
 
-        if (erase) {
-            pb_paint_hspan(ix, iy, row, lp, lf, rf, rp, cxl, cxr, dy, ri,
-                           bg, screen_bg);          /* 恢复成槽（带混色的轮廓） */
-        }
         if ((int16_t)(ih - 1 - row) >= f_new) {     /* 该行还没填充到 */
+            if (erase) {                            /* 没被填充盖住才需要擦 */
+                pb_paint_hspan(ix, iy, row, lp, lf, rf, rp, cxl, cxr, dy, ri,
+                               bg, screen_bg);      /* 恢复成槽（带混色的轮廓） */
+            }
             continue;
         }
         pb_paint_hspan(ix, iy, row, lp, lf, rf, rp, cxl, cxr, dy, ri,
-                       fg, screen_bg);
+                       fg, screen_bg);              /* 同一跨度直接覆盖，无需先擦 */
     }
 }
 

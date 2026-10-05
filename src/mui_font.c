@@ -116,17 +116,13 @@ static void text_decor_draw(int16_t x, int16_t y, int16_t w,
  *        步进 adv_w 与字形成像范围都不变，故串内位置与不加粗完全一致；
  *        也避免了"重画一遍"在 8bpp 下按错误底色混合导致边缘发脏。
  */
-static void text_draw_char_flags(int16_t x, int16_t y, char c, const mui_font_t *f,
-                                 uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags)
+static void text_draw_glyph_flags(int16_t x, int16_t y, const mui_glyph_dsc_t *g,
+                                  const mui_font_t *f,
+                                  uint16_t fg, uint16_t bg, int16_t scale,
+                                  uint8_t flags)
 {
-    const mui_glyph_dsc_t *g;
     int16_t gx, gy;
     int row, col;
-
-    g = mui_font_find_glyph(f, c);
-    if (g == NULL) {
-        return;
-    }
 
     /* 行框顶部到字形顶部的偏移（base_line 从行底向上为正） */
     gx = (int16_t)(x + g->ofs_x * scale);
@@ -162,6 +158,18 @@ static void text_draw_char_flags(int16_t x, int16_t y, char c, const mui_font_t 
     }
 }
 
+/** @brief 内部：单字符稀疏绘制（查表后转 text_draw_glyph_flags，避免重复查字形） */
+static void text_draw_char_flags(int16_t x, int16_t y, char c, const mui_font_t *f,
+                                 uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags)
+{
+    const mui_glyph_dsc_t *g = mui_font_find_glyph(f, c);
+
+    if (g == NULL) {
+        return;
+    }
+    text_draw_glyph_flags(x, y, g, f, fg, bg, scale, flags);
+}
+
 void mui_text_draw_char(int16_t x, int16_t y, char c, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale)
 {
@@ -175,7 +183,6 @@ void mui_text_draw_ex(int16_t x, int16_t y, const char *s, const mui_font_t *f,
                            uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags)
 {
     int16_t x0 = x;
-    const char *s0 = s;
 
     if (f == NULL || s == NULL || scale < 1) {
         return;
@@ -183,15 +190,16 @@ void mui_text_draw_ex(int16_t x, int16_t y, const char *s, const mui_font_t *f,
     while (*s) {
         const mui_glyph_dsc_t *g = mui_font_find_glyph(f, *s);
         if (g != NULL) {
-            text_draw_char_flags(x, y, *s, f, fg, bg, scale, flags);
+            text_draw_glyph_flags(x, y, g, f, fg, bg, scale, flags);
             /* 步进宽度：adv_w 为 1/16 像素，四舍五入 */
             x = (int16_t)(x + text_char_step(g, scale));
         }
         s++;
     }
-    /* 装饰线在字形之后画（整串一条，覆盖字形墨迹） */
+    /* 装饰线在字形之后画（整串一条，覆盖字形墨迹）；
+     * 宽度直接用循环累计的步进和（与 mui_text_width 等价，免再扫一遍整串） */
     if (flags & (MUI_TEXT_UNDERLINE | MUI_TEXT_STRIKE)) {
-        text_decor_draw(x0, y, mui_text_width(s0, f, scale), f, fg, scale, flags);
+        text_decor_draw(x0, y, (int16_t)(x - x0), f, fg, scale, flags);
     }
 }
 
@@ -263,31 +271,44 @@ void mui_text_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h,
  * @note  覆盖行数 = mui_text_height(f, scale, flags)：行框（含放大倍数）
  *        加上行框外的下划线行；装饰线与整串绘制结果逐像素一致。
  */
-static void text_draw_char_cell_flags(int16_t x, int16_t y, char c,
-                                      const mui_font_t *f,
-                                      uint16_t fg, uint16_t bg, int16_t scale,
-                                      uint8_t flags)
+/** @brief 整格覆盖绘制的串级公共量（只与字体/缩放/装饰有关，整串算一次即可） */
+typedef struct {
+    int16_t rows;   /**< 覆盖行数（行框 + 行框外的装饰行） */
+    int16_t th;     /**< 装饰线宽 */
+    int16_t uy;     /**< 下划线起始行（相对 y） */
+    int16_t sy;     /**< 删除线起始行（相对 y） */
+} mui_text_cell_ctx_t;
+
+static void text_cell_ctx_init(mui_text_cell_ctx_t *ctx, const mui_font_t *f,
+                               int16_t scale, uint8_t flags)
 {
-    const mui_glyph_dsc_t *g;
+    ctx->rows = mui_text_height(f, scale, flags);
+    ctx->th   = text_line_w(scale);
+    ctx->uy   = text_line_rel(f, scale, 0);
+    ctx->sy   = text_line_rel(f, scale, 1);
+}
+
+static void text_draw_glyph_cell_flags(int16_t x, int16_t y,
+                                       const mui_glyph_dsc_t *g,
+                                       const mui_font_t *f,
+                                       uint16_t fg, uint16_t bg, int16_t scale,
+                                       uint8_t flags,
+                                       const mui_text_cell_ctx_t *ctx)
+{
     uint16_t line[MUI_FONT_CELL_LINE_MAX];
     int16_t step, gy_rel, rows, th, uy, sy;
     int row, col, i, px;
-
-    g = mui_font_find_glyph(f, c);
-    if (g == NULL || scale < 1) {
-        return;
-    }
 
     step = text_char_step(g, scale);                   /* 格宽 = 步进宽 */
     if (step < 1 || step > MUI_FONT_CELL_LINE_MAX) {
         return;                                        /* 超行缓冲上限：跳过 */
     }
-    /* 字形在行框内的纵向起点（与 text_draw_char_flags 的 gy 计算一致） */
+    /* 字形在行框内的纵向起点（与 text_draw_glyph_flags 的 gy 计算一致） */
     gy_rel = (int16_t)((f->line_height - f->base_line - g->box_h - g->ofs_y) * scale);
-    rows   = mui_text_height(f, scale, flags);
-    th     = text_line_w(scale);
-    uy     = text_line_rel(f, scale, 0);
-    sy     = text_line_rel(f, scale, 1);
+    rows   = ctx->rows;
+    th     = ctx->th;
+    uy     = ctx->uy;
+    sy     = ctx->sy;
 
     for (row = 0; row < rows; row++) {
         /* 本行先铺背景色（旧内容被就地覆盖） */
@@ -338,6 +359,22 @@ static void text_draw_char_cell_flags(int16_t x, int16_t y, char c,
     }
 }
 
+/** @brief 内部：单字符整格覆盖（查表 + 算串级量后转 text_draw_glyph_cell_flags） */
+static void text_draw_char_cell_flags(int16_t x, int16_t y, char c,
+                                      const mui_font_t *f,
+                                      uint16_t fg, uint16_t bg, int16_t scale,
+                                      uint8_t flags)
+{
+    const mui_glyph_dsc_t *g = mui_font_find_glyph(f, c);
+    mui_text_cell_ctx_t ctx;
+
+    if (g == NULL || scale < 1) {
+        return;
+    }
+    text_cell_ctx_init(&ctx, f, scale, flags);
+    text_draw_glyph_cell_flags(x, y, g, f, fg, bg, scale, flags, &ctx);
+}
+
 void mui_text_draw_char_cell(int16_t x, int16_t y, char c,
                                 const mui_font_t *f,
                                 uint16_t fg, uint16_t bg, int16_t scale)
@@ -352,13 +389,16 @@ void mui_text_draw_cell_ex(int16_t x, int16_t y, const char *s,
                                 const mui_font_t *f,
                                 uint16_t fg, uint16_t bg, int16_t scale, uint8_t flags)
 {
+    mui_text_cell_ctx_t ctx;
+
     if (f == NULL || s == NULL || scale < 1) {
         return;
     }
+    text_cell_ctx_init(&ctx, f, scale, flags);         /* 串级量只算一次 */
     while (*s) {
         const mui_glyph_dsc_t *g = mui_font_find_glyph(f, *s);
         if (g != NULL) {
-            text_draw_char_cell_flags(x, y, *s, f, fg, bg, scale, flags);
+            text_draw_glyph_cell_flags(x, y, g, f, fg, bg, scale, flags, &ctx);
             x = (int16_t)(x + text_char_step(g, scale));
         }
         s++;
