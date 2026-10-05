@@ -4,19 +4,23 @@ rem usage: build.bat        build all
 rem         build.bat run    build and run simulator
 rem
 rem Toolchain lookup order:
-rem   1) cmake already on PATH  2) %MUI_SDK%\cmake\bin\cmake.exe
-rem %MUI_SDK%\mingw64\bin is always prepended so the bundled MinGW-w64 gcc wins.
+rem   1) cmake already on PATH
+rem   2) %MUI_SDK%\cmake\bin\cmake.exe  (MUI_SDK is optional; default is a guess)
+rem   3) pip-installed cmake resolved through python (cmake.CMAKE_BIN_DIR)
+rem %MUI_SDK%\mingw64\bin is prepended only when it exists, so a bundled MinGW-w64 gcc wins.
 
 setlocal
 
-set "MUI_SDK=E:\WorkSpace\SDK"
-set "PATH=%MUI_SDK%\mingw64\bin;%PATH%"
+if not defined MUI_SDK set "MUI_SDK=E:\WorkSpace\SDK"
+if exist "%MUI_SDK%\mingw64\bin" set "PATH=%MUI_SDK%\mingw64\bin;%PATH%"
 
 set "CMAKE="
 for /f "delims=" %%i in ('where cmake 2^>nul') do if not defined CMAKE set "CMAKE=%%i"
 if not defined CMAKE if exist "%MUI_SDK%\cmake\bin\cmake.exe" set "CMAKE=%MUI_SDK%\cmake\bin\cmake.exe"
+for /f "delims=" %%i in ('python -c "import cmake;print(cmake.CMAKE_BIN_DIR)" 2^>nul') do if not defined CMAKE set "CMAKE=%%i\cmake.exe"
+if defined CMAKE if not exist "%CMAKE%" set "CMAKE="
 if not defined CMAKE (
-    echo [ERROR] cmake not found. Put cmake on PATH, or fix MUI_SDK in this script.
+    echo [ERROR] cmake not found. Put cmake on PATH, set MUI_SDK, or install it with: python -m pip install cmake
     exit /b 1
 )
 
